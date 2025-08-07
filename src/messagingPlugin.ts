@@ -71,11 +71,298 @@ export class MessagingPlugin {
     return `msg_${timestamp}_${random}`;
   }
 
+  /**
+   * Sends a message to a public room (unencrypted)
+   * @param roomId The room identifier
+   * @param messageContent The message content
+   * @returns Promise resolving to operation result
+   */
+  public async sendPublicMessage(
+    roomId: string,
+    messageContent: string
+  ): Promise<MessageResponse> {
+    const core = this.assertInitialized();
+
+    console.log(`[${this.name}] 📤 sendPublicMessage called with:`, {
+      roomId,
+      contentLength: messageContent.length,
+      isLoggedIn: core.isLoggedIn(),
+      hasUser: !!core.db.user,
+    });
+
+    if (!core.isLoggedIn() || !core.db.user) {
+      return {
+        success: false,
+        error: "Devi essere loggato per inviare un messaggio pubblico.",
+      };
+    }
+
+    if (
+      !roomId ||
+      !messageContent ||
+      typeof roomId !== "string" ||
+      typeof messageContent !== "string"
+    ) {
+      return {
+        success: false,
+        error:
+          "ID stanza e messaggio sono obbligatori e devono essere stringhe valide.",
+      };
+    }
+
+    try {
+      const currentUserPair = (core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return {
+          success: false,
+          error: "Coppia di chiavi utente non disponibile",
+        };
+      }
+
+      const senderPub = currentUserPair.pub;
+      const messageId = this.generateMessageId();
+      const username =
+        (core.db.user?.is?.alias as string) || `User_${senderPub.slice(0, 8)}`;
+
+      console.log(
+        `[${this.name}] 🔍 Current user pub: ${senderPub.slice(0, 8)}...`
+      );
+      console.log(`[${this.name}] 🔍 Room ID: ${roomId}`);
+
+      // Crea il messaggio pubblico
+      const publicMessage: PublicMessage = {
+        from: senderPub,
+        content: messageContent,
+        timestamp: Date.now(),
+        id: messageId,
+        roomId,
+        username,
+      };
+
+      // Firma il messaggio per autenticità
+      const signature = await core.db.sea.sign(messageContent, currentUserPair);
+
+      // Aggiungi la firma al messaggio
+      const signedMessage = {
+        ...publicMessage,
+        signature,
+      };
+
+      // Usa il metodo condiviso per inviare a GunDB
+      await this.sendToGunDB(roomId, messageId, signedMessage, "public");
+
+      console.log(`[${this.name}] ✅ Public message sent successfully`);
+
+      return { success: true, messageId };
+    } catch (error: any) {
+      console.error(
+        `[${this.name}] ❌ Errore invio messaggio pubblico:`,
+        error
+      );
+      return {
+        success: false,
+        error:
+          error.message ||
+          "Errore sconosciuto durante l'invio del messaggio pubblico",
+      };
+    }
+  }
+
+  /**
+   * Starts listening to public room messages
+   * @param roomId The room identifier to listen to
+   */
+  public startListeningPublic(roomId: string): void {
+    const core = this.assertInitialized();
+    if (!core.isLoggedIn() || this.isListeningPublic || !core.db.user) {
+      return;
+    }
+
+    const currentUserPair = (core.db.user as any)._?.sea;
+    if (!currentUserPair) {
+      console.error(`[${this.name}] Coppia di chiavi utente non disponibile`);
+      return;
+    }
+
+    this.isListeningPublic = true;
+    const currentUserPub = currentUserPair.pub;
+
+    console.log(
+      `[${this.name}] 🔊 Starting public room listener for: ${roomId}`
+    );
+
+    // Listener per messaggi pubblici
+    const roomNode = core.db.gun.get(`room_${roomId}`).map();
+
+    this.publicMessageListener = roomNode.on(
+      async (messageData: any, messageId: string) => {
+        await this.processIncomingPublicMessage(
+          messageData,
+          messageId,
+          currentUserPub,
+          roomId
+        );
+      }
+    );
+  }
+
+  /**
+   * Stops listening to public room messages
+   */
+  public stopListeningPublic(): void {
+    if (!this.isListeningPublic) return;
+
+    if (this.publicMessageListener) {
+      this.publicMessageListener.off();
+      this.publicMessageListener = null;
+    }
+
+    this.isListeningPublic = false;
+    this.processedPublicMessageIds.clear();
+    console.log(`[${this.name}] 🔇 Stopped public room listener`);
+  }
+
+  /**
+   * Processes incoming public messages
+   */
+  private async processIncomingPublicMessage(
+    messageData: any,
+    messageId: string,
+    currentUserPub: string,
+    roomId: string
+  ): Promise<void> {
+    // Validazione base
+    if (
+      !messageData?.content ||
+      !messageData?.from ||
+      !messageData?.roomId ||
+      messageData.roomId !== roomId
+    ) {
+      return;
+    }
+
+    // Controllo duplicati per ID
+    if (this.processedPublicMessageIds.has(messageId)) {
+      console.log(
+        `[${this.name}] 🔄 Duplicate public message ID detected: ${messageId.slice(0, 20)}...`
+      );
+      return;
+    }
+
+    this.cleanupProcessedMessages();
+    this.processedPublicMessageIds.set(messageId, Date.now());
+
+    try {
+      // Verifica la firma se presente
+      if (messageData.signature) {
+        const isValid = await this.verifyMessageSignature(
+          messageData.content,
+          messageData.signature,
+          messageData.from
+        );
+        if (!isValid) {
+          console.warn(
+            `[${this.name}] ⚠️ Invalid signature for public message from: ${messageData.from.slice(0, 8)}...`
+          );
+          // Non bloccare il messaggio, solo loggare l'avviso
+        }
+      }
+
+      // Notifica i listener
+      if (this.publicMessageListeners.length > 0) {
+        this.publicMessageListeners.forEach((callback) => {
+          try {
+            callback(messageData as PublicMessage);
+          } catch (error) {
+            console.error(`[${this.name}] ❌ Errore listener pubblico:`, error);
+          }
+        });
+      } else {
+        console.warn(
+          `[${this.name}] ⚠️ Nessun listener pubblico registrato per il messaggio`
+        );
+      }
+    } catch (error) {
+      this.processedPublicMessageIds.delete(messageId);
+      console.error(
+        `[${this.name}] ❌ Errore processamento messaggio pubblico:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Shared method to send messages to GunDB (DRY principle)
+   */
+  private async sendToGunDB(
+    path: string,
+    messageId: string,
+    messageData: any,
+    type: "private" | "public"
+  ): Promise<void> {
+    const core = this.assertInitialized();
+    const safePath =
+      type === "public" ? `room_${path}` : this.createSafePath(path);
+    const messageNode = core.db.gun.get(safePath);
+
+    console.log(
+      `[${this.name}] 📡 Sending ${type} message to GunDB path: ${safePath}`
+    );
+
+    return new Promise<void>((resolve, reject) => {
+      try {
+        messageNode.get(messageId).put(messageData, (ack: any) => {
+          if (ack.err) {
+            console.error(
+              `[${this.name}] ❌ Errore invio messaggio ${type}:`,
+              ack.err
+            );
+            console.error(`[${this.name}] 🔍 Ack details:`, ack);
+            reject(new Error(ack.err));
+          } else {
+            console.log(
+              `[${this.name}] ✅ ${type} message sent successfully to GunDB`
+            );
+            resolve();
+          }
+        });
+      } catch (error) {
+        console.error(
+          `[${this.name}] ❌ Errore durante put operation ${type}:`,
+          error
+        );
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Verifies message signature
+   */
+  private async verifyMessageSignature(
+    content: string,
+    signature: string,
+    senderPub: string
+  ): Promise<boolean> {
+    const core = this.assertInitialized();
+
+    try {
+      const isValid = await core.db.sea.verify(signature, senderPub);
+      return !!isValid;
+    } catch (error) {
+      console.error(`[${this.name}] ❌ Errore verifica firma:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Enhanced cleanup for both private and public messages
+   */
   private cleanupProcessedMessages(): void {
     const now = Date.now();
     const expiredIds: string[] = [];
 
-    // Clean up message IDs
+    // Clean up private message IDs
     for (const [messageId, timestamp] of this.processedMessageIds.entries()) {
       if (now - timestamp > this.MESSAGE_TTL) {
         expiredIds.push(messageId);
@@ -84,17 +371,38 @@ export class MessagingPlugin {
 
     expiredIds.forEach((id) => this.processedMessageIds.delete(id));
 
-    // Limit size of map
-    if (this.processedMessageIds.size > this.MAX_PROCESSED_MESSAGES) {
-      const sortedEntries = Array.from(this.processedMessageIds.entries()).sort(
+    // Clean up public message IDs
+    expiredIds.length = 0;
+    for (const [
+      messageId,
+      timestamp,
+    ] of this.processedPublicMessageIds.entries()) {
+      if (now - timestamp > this.MESSAGE_TTL) {
+        expiredIds.push(messageId);
+      }
+    }
+
+    expiredIds.forEach((id) => this.processedPublicMessageIds.delete(id));
+
+    // Limit size of both maps
+    this.limitMapSize(this.processedMessageIds);
+    this.limitMapSize(this.processedPublicMessageIds);
+  }
+
+  /**
+   * Shared method to limit map size (DRY principle)
+   */
+  private limitMapSize(map: Map<string, number>): void {
+    if (map.size > this.MAX_PROCESSED_MESSAGES) {
+      const sortedEntries = Array.from(map.entries()).sort(
         ([, a], [, b]) => a - b
       );
 
       const toRemove = sortedEntries.slice(
         0,
-        this.processedMessageIds.size - this.MAX_PROCESSED_MESSAGES
+        map.size - this.MAX_PROCESSED_MESSAGES
       );
-      toRemove.forEach(([id]) => this.processedMessageIds.delete(id));
+      toRemove.forEach(([id]) => map.delete(id));
     }
   }
 
@@ -557,31 +865,12 @@ export class MessagingPlugin {
         `[${this.name}] 📡 Sending to GunDB path: ${recipientSafePath}`
       );
 
-      await new Promise<void>((resolve, reject) => {
-        try {
-          messageNode.get(messageId).put(encryptedMessageData, (ack: any) => {
-            if (ack.err) {
-              console.error(
-                `[${this.name}] ❌ Errore invio messaggio:`,
-                ack.err
-              );
-              console.error(`[${this.name}] 🔍 Ack details:`, ack);
-              reject(new Error(ack.err));
-            } else {
-              console.log(
-                `[${this.name}] ✅ Message sent successfully to GunDB`
-              );
-              resolve();
-            }
-          });
-        } catch (error) {
-          console.error(
-            `[${this.name}] ❌ Errore durante put operation:`,
-            error
-          );
-          reject(error);
-        }
-      });
+      await this.sendToGunDB(
+        recipientPub,
+        messageId,
+        encryptedMessageData,
+        "private"
+      );
 
       return { success: true, messageId };
     } catch (error: any) {
@@ -873,17 +1162,23 @@ export class MessagingPlugin {
   public getStats() {
     return {
       isListening: this.isListening,
+      isListeningPublic: this.isListeningPublic,
       messageListenersCount: this.messageListeners.length,
+      publicMessageListenersCount: this.publicMessageListeners.length,
       processedMessagesCount: this.processedMessageIds.size,
+      processedPublicMessagesCount: this.processedPublicMessageIds.size,
       clearedConversationsCount: this.clearedConversations.size,
       version: this.version,
       hasActiveListener: !!this.messageListener,
+      hasActivePublicListener: !!this.publicMessageListener,
     };
   }
 
   public destroy(): void {
     this.stopListening();
+    this.stopListeningPublic();
     this.messageListeners = [];
+    this.publicMessageListeners = [];
     this.core = null;
   }
 }
