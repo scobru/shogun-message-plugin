@@ -435,6 +435,48 @@ export class ChatManager {
   }
 
   /**
+   * Removes a chat reference from the user's profile
+   */
+  public async removeChatReferenceFromUserProfile(
+    userPub: string,
+    chatType: "private" | "public" | "group" | "token",
+    chatId: string
+  ): Promise<void> {
+    try {
+      console.log(`[ChatManager] 🗑️ Removing chat reference:`, {
+        userPub: userPub.slice(0, 20) + "...",
+        chatType,
+        chatId,
+        path: `chats/${chatType}/${chatId}`,
+      });
+
+      // Remove individual chat reference
+      await this.core.db.putUserData(`chats/${chatType}/${chatId}`, null);
+
+      // Also remove from the chat list
+      try {
+        const existingChatList =
+          (await this.core.db.getUserData("chatList")) || {};
+        const updatedChatList = { ...existingChatList };
+        delete updatedChatList[chatId];
+
+        await this.core.db.putUserData("chatList", updatedChatList);
+        console.log(
+          `[ChatManager] ✅ Updated chat list - removed ${chatId}, now has ${Object.keys(updatedChatList).length} chats`
+        );
+      } catch (listError) {
+        console.warn(`[ChatManager] ⚠️ Could not update chat list:`, listError);
+      }
+
+      console.log(
+        `[ChatManager] ✅ Removed chat reference for user ${userPub.slice(0, 20)}...`
+      );
+    } catch (error) {
+      console.warn(`[ChatManager] ⚠️ Could not remove chat reference:`, error);
+    }
+  }
+
+  /**
    * Stores a chat reference in the user's profile for persistence
    */
   public async storeChatReferenceInUserProfile(
@@ -644,6 +686,31 @@ export class ChatManager {
           const groupData = await this.groupManager.getGroupData(chatId);
           if (groupData) {
             console.log(`[ChatManager] ✅ Group data retrieved:`, groupData);
+
+            // Verify that the current user is still a member of this group
+            const currentUserPub = this.core.db.getCurrentUser()?.pub;
+            if (
+              currentUserPub &&
+              groupData.members &&
+              Array.isArray(groupData.members)
+            ) {
+              const isMember = groupData.members.includes(currentUserPub);
+              if (!isMember) {
+                console.log(
+                  `[ChatManager] ⚠️ User ${currentUserPub.slice(0, 20)}... is not a member of group ${chatId}, filtering out`
+                );
+                return null; // Filter out this group
+              }
+              console.log(
+                `[ChatManager] ✅ User ${currentUserPub.slice(0, 20)}... is confirmed member of group ${chatId}`
+              );
+            } else {
+              console.warn(
+                `[ChatManager] ⚠️ Could not verify membership for group ${chatId} - missing user pub or members data`
+              );
+              // If we can't verify membership, we'll include it to be safe
+            }
+
             chatData = {
               ...chatData,
               name: groupData.name,
@@ -654,12 +721,17 @@ export class ChatManager {
             };
           } else {
             console.warn(`[ChatManager] ⚠️ No group data found for ${chatId}`);
+            // If no group data is found, the group might have been deleted
+            // We'll filter it out to avoid showing non-existent groups
+            return null;
           }
         } catch (error) {
           console.warn(
             `[ChatManager] ⚠️ Could not fetch group data for ${chatId}:`,
             error
           );
+          // If we can't fetch group data, filter out this group to avoid errors
+          return null;
         }
       }
 

@@ -301,21 +301,20 @@ export class MessageProcessor {
           `[MessageProcessor] 🔐 Current user is recipient, decrypting group key`
         );
 
-        // STEP 1: Ottieni la chiave cifrata per questo utente
+        // STEP 1: Get the group data to find the creator and encrypted keys
+        const groupData = await this.groupManager.getGroupData(groupId);
+        if (!groupData) {
+          console.error(`[MessageProcessor] ❌ Could not retrieve group data`);
+          return;
+        }
+
+        // STEP 2: Get the encrypted key for this user
         console.log(
           `[MessageProcessor] 🔍 Looking for encrypted key for user: ${currentUserPub}`
         );
         console.log(
           `[MessageProcessor] 🔍 Available encrypted keys:`,
           messageData.encryptedKeys
-        );
-        console.log(
-          `[MessageProcessor] 🔍 Encrypted keys type:`,
-          typeof messageData.encryptedKeys
-        );
-        console.log(
-          `[MessageProcessor] 🔍 Encrypted keys keys:`,
-          Object.keys(messageData.encryptedKeys || {})
         );
 
         // Handle GunDB reference in encryptedKeys
@@ -373,14 +372,30 @@ export class MessageProcessor {
           return;
         }
 
-        // STEP 2: Decifra la chiave del gruppo usando il secret condiviso
-        const senderEpub = await this.encryptionManager.getRecipientEpub(
-          messageData.from
+        // STEP 3: Decrypt the group key using the group creator's shared secret
+        // The group key was encrypted by the creator, so we need the creator's epub
+        console.log(
+          `[MessageProcessor] 🔐 Getting creator epub for: ${groupData.createdBy.slice(0, 8)}...`
+        );
+        const creatorEpub = await this.encryptionManager.getRecipientEpub(
+          groupData.createdBy
+        );
+        console.log(
+          `[MessageProcessor] 🔐 Creator epub retrieved: ${creatorEpub.slice(0, 8)}...`
+        );
+
+        console.log(
+          `[MessageProcessor] 🔐 Generating shared secret with creator...`
         );
         const sharedSecret = await this.core.db.sea.secret(
-          senderEpub,
+          creatorEpub,
           currentUserPair
         );
+        console.log(
+          `[MessageProcessor] 🔐 Shared secret generated: ${sharedSecret ? "success" : "failed"}`
+        );
+
+        console.log(`[MessageProcessor] 🔐 Decrypting group key...`);
         decryptedGroupKey = await this.core.db.sea.decrypt(
           encryptedKey,
           sharedSecret || ""
@@ -388,8 +403,17 @@ export class MessageProcessor {
 
         if (!decryptedGroupKey) {
           console.error(`[MessageProcessor] ❌ Could not decrypt group key`);
+          console.error(
+            `[MessageProcessor] ❌ Creator pub: ${groupData.createdBy}`
+          );
+          console.error(`[MessageProcessor] ❌ Creator epub: ${creatorEpub}`);
+          console.error(
+            `[MessageProcessor] ❌ Shared secret available: ${!!sharedSecret}`
+          );
           return;
         }
+
+        console.log(`[MessageProcessor] ✅ Group key decrypted successfully`);
       }
 
       // STEP 3: Decifra il contenuto del messaggio usando la chiave del gruppo

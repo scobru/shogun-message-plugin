@@ -259,6 +259,34 @@ export class MessagingPlugin extends BasePlugin {
     return this.groupManager.isGroupMember(groupId, userPub);
   }
 
+  /**
+   * Removes a member from a group (only group creator can do this)
+   */
+  public async removeMemberFromGroup(
+    groupId: string,
+    memberPubToRemove: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.groupManager.removeMemberFromGroup(groupId, memberPubToRemove);
+  }
+
+  /**
+   * Allows a user to leave a group
+   */
+  public async leaveGroup(
+    groupId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.groupManager.leaveGroup(groupId);
+  }
+
+  /**
+   * Deletes a group entirely (only group creator can do this)
+   */
+  public async deleteGroup(
+    groupId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.groupManager.deleteGroup(groupId);
+  }
+
   // ===== TOKEN ROOM MESSAGING =====
 
   public async createTokenRoom(
