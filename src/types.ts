@@ -26,10 +26,107 @@ export interface BaseImportOptions {
   overwrite?: boolean;
 }
 
+// Messaging specific types
+export interface MessageData {
+  from: string;
+  content: string;
+  timestamp: number;
+  id: string;
+  signature?: string;
+  roomId?: string; // For public room messages
+  isPublic?: boolean; // Flag to distinguish public from private messages
+  groupId?: string; // For group messages
+  isGroup?: boolean; // Flag to distinguish group messages
+}
+
+export interface MessageResponse {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+export interface EncryptedMessage {
+  data: string; // MessageData cifrato completo
+  from: string;
+  timestamp: number;
+  id: string;
+}
+
+export interface PublicMessage {
+  from: string;
+  content: string;
+  timestamp: number;
+  id: string;
+  roomId: string;
+  username?: string; // Optional username for display
+}
+
+// Token-based encrypted room types
+export interface TokenRoomMessage {
+  from: string;
+  content: string;
+  timestamp: number;
+  id: string;
+  roomId: string;
+  username?: string;
+  encryptedContent: string; // Content encrypted with shared token
+  signature?: string; // Digital signature for authenticity
+}
+
+export interface TokenRoomData {
+  id: string;
+  name: string;
+  token: string; // Shared encryption token
+  createdBy: string;
+  createdAt: number;
+  description?: string;
+  maxParticipants?: number;
+}
+
+// Group types
+export interface GroupMessage {
+  from: string;
+  content: string;
+  timestamp: number;
+  id: string;
+  groupId: string;
+  username?: string;
+  encryptedContent: string; // Contenuto cifrato con encryption key
+  encryptedKeys: { [recipientPub: string]: string }; // Encryption keys cifrate per ogni membro
+  signature?: string; // Firma digitale del messaggio
+}
+
+export interface GroupData {
+  id: string;
+  name: string;
+  members: string[]; // Array di public keys
+  createdBy: string;
+  createdAt: number;
+  encryptionKey: string; // Chiave di cifratura del gruppo
+  encryptedKeys?: { [memberPub: string]: string }; // Encrypted copies of group key for each member
+}
+
+// Listener types
+export interface TokenRoomMessageListener {
+  (message: TokenRoomMessage): void;
+}
+
+export interface GroupMessageListener {
+  (message: GroupMessage): void;
+}
+
+export interface MessageListener {
+  (message: MessageData): void;
+}
+
+export interface PublicMessageListener {
+  (message: PublicMessage): void;
+}
+
 /**
  * Interface for encrypted message data
  */
-export interface EncryptedMessage {
+export interface EncryptedMessageLegacy {
   content: string;
   timestamp: number;
   id: string;
