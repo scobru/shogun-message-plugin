@@ -11,7 +11,7 @@ import {
   GroupMessageListener,
   TokenRoomMessageListener,
 } from "./types";
-import { generateMessageId, createSafePath } from "./utils";
+import { generateMessageId, createSafePath, sendToGunDB } from "./utils";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
 import { PublicRoomManager } from "./publicRoomManager";
@@ -165,7 +165,8 @@ export class MessagingPlugin extends BasePlugin {
       };
 
       // Usa il metodo condiviso per inviare a GunDB
-      await this.sendToGunDB(
+      await sendToGunDB(
+        core,
         recipientPub,
         messageId,
         encryptedMessageData,
@@ -356,40 +357,6 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   // ===== UTILITY METHODS =====
-
-  private async sendToGunDB(
-    path: string,
-    messageId: string,
-    messageData: any,
-    type: "private" | "public" | "group"
-  ): Promise<void> {
-    const core = this.assertInitialized();
-    let safePath: string;
-
-    if (type === "public") {
-      safePath = `room_${path}`;
-    } else if (type === "group") {
-      safePath = path;
-    } else {
-      safePath = createSafePath(path);
-    }
-
-    const messageNode = core.db.gun.get(safePath);
-
-    return new Promise<void>((resolve, reject) => {
-      try {
-        messageNode.get(messageId).put(messageData, (ack: any) => {
-          if (ack.err) {
-            reject(new Error(ack.err));
-          } else {
-            resolve();
-          }
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
 
   // ===== STATS AND INFO =====
 

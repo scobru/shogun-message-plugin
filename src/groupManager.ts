@@ -1,6 +1,6 @@
 import { ShogunCore } from "shogun-core";
 import { GroupData, GroupMessage, MessageResponse } from "./types";
-import { generateGroupId, createSafePath } from "./utils";
+import { generateGroupId, createSafePath, sendToGunDB } from "./utils";
 import { EncryptionManager } from "./encryption";
 import { ChatManager } from "./chatManager";
 
@@ -65,7 +65,9 @@ export class GroupManager {
       const groupId = generateGroupId();
 
       // Genera una chiave di cifratura per il gruppo
-      const encryptionKey = `group_key_${groupId}_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      const encryptionKey = `group_key_${groupId}_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(2, 15)}`;
 
       // Aggiungi il creatore ai membri
       const allMembers = [creatorPub, ...memberPubs];
@@ -85,9 +87,8 @@ export class GroupManager {
       console.log(
         `[GroupManager] 🔐 Creating encrypted keys for ${allMembers.length} initial members`
       );
+      const failedMembers: string[] = [];
       for (const memberPub of allMembers) {
-        if (memberPub === creatorPub) continue; // Skip creator as they don't need their own encrypted key
-
         try {
           const memberEpub =
             await this.encryptionManager.getRecipientEpub(memberPub);
@@ -101,14 +102,31 @@ export class GroupManager {
           );
           groupData.encryptedKeys![memberPub] = encryptedKey;
           console.log(
-            `[GroupManager] ✅ Created encrypted key for member ${memberPub.slice(0, 8)}...`
+            `[GroupManager] ✅ Created encrypted key for member ${memberPub.slice(
+              0,
+              8
+            )}...`
           );
         } catch (error) {
           console.warn(
-            `[GroupManager] ⚠️ Could not create encrypted key for member ${memberPub.slice(0, 8)}...:`,
+            `[GroupManager] ⚠️ Could not create encrypted key for member ${memberPub.slice(
+              0,
+              8
+            )}...:`,
             error
           );
+          failedMembers.push(memberPub);
         }
+      }
+
+      // Abort if any key creation failed
+      if (failedMembers.length > 0) {
+        return {
+          success: false,
+          error: `Impossibile creare le chiavi di cifratura per i seguenti membri: ${failedMembers.join(
+            ", "
+          )}. Creazione del gruppo annullata.`,
+        };
       }
 
       // Store group data with members as an object with numbered keys for GunDB compatibility
@@ -182,7 +200,10 @@ export class GroupManager {
           memberNode.get(groupId).put(gunDBGroupData, (ack: any) => {
             if (ack.err) {
               console.warn(
-                `[GroupManager] ⚠️ Could not publish group to member ${memberPub.slice(0, 8)}...`
+                `[GroupManager] ⚠️ Could not publish group to member ${memberPub.slice(
+                  0,
+                  8
+                )}...`
               );
             }
             resolve();
@@ -321,55 +342,15 @@ export class GroupManager {
         groupData.encryptionKey
       );
 
-      // STEP 2: Per ogni membro, cifra la chiave del gruppo con il loro secret
-      const encryptedKeys: { [recipientPub: string]: string } = {};
-
-      // Create encrypted keys for all members (don't use stored keys to avoid GunDB references)
-      for (const memberPub of members) {
-        try {
-          console.log(
-            `[GroupManager] 🔐 Creating encrypted key for member ${memberPub.slice(0, 8)}...`
-          );
-
-          let encryptedKey: string;
-
-          if (memberPub === senderPub) {
-            // For the sender, encrypt the group key with their own public key
-            // This allows the sender to decrypt their own messages
-            const senderEpub =
-              await this.encryptionManager.getRecipientEpub(senderPub);
-            const sharedSecret = await this.core.db.sea.secret(
-              senderEpub,
-              currentUserPair
-            );
-            encryptedKey = await this.core.db.sea.encrypt(
-              groupData.encryptionKey!,
-              sharedSecret || ""
-            );
-          } else {
-            // For other members, encrypt the group key with their epub
-            const memberEpub =
-              await this.encryptionManager.getRecipientEpub(memberPub);
-            const sharedSecret = await this.core.db.sea.secret(
-              memberEpub,
-              currentUserPair
-            );
-            encryptedKey = await this.core.db.sea.encrypt(
-              groupData.encryptionKey!,
-              sharedSecret || ""
-            );
-          }
-
-          encryptedKeys[memberPub] = encryptedKey;
-          console.log(
-            `[GroupManager] ✅ Created encrypted key for member ${memberPub.slice(0, 8)}...`
-          );
-        } catch (error) {
-          console.warn(
-            `[GroupManager] ⚠️ Could not encrypt for member ${memberPub.slice(0, 8)}...:`,
-            error
-          );
-        }
+      // STEP 2: Utilizza le chiavi pre-crittografate memorizzate nei dati del gruppo
+      if (
+        !groupData.encryptedKeys ||
+        Object.keys(groupData.encryptedKeys).length === 0
+      ) {
+        return {
+          success: false,
+          error: "Chiavi crittografate per i membri del gruppo non trovate.",
+        };
       }
 
       // Crea il messaggio di gruppo
@@ -381,12 +362,12 @@ export class GroupManager {
         groupId,
         username,
         encryptedContent,
-        encryptedKeys: JSON.parse(JSON.stringify(encryptedKeys)), // Deep copy to avoid GunDB references
+        encryptedKeys: groupData.encryptedKeys, // Usa le chiavi memorizzate
       };
 
       console.log(
         `[GroupManager] 🔍 Final group message encrypted keys:`,
-        encryptedKeys
+        groupMessage.encryptedKeys
       );
       console.log(`[GroupManager] 🔍 Group message structure:`, {
         from: groupMessage.from,
@@ -404,7 +385,8 @@ export class GroupManager {
       groupMessage.signature = signature;
 
       // Invia il messaggio al gruppo
-      await this.sendToGunDB(
+      await sendToGunDB(
+        this.core,
         `group_${groupId}`,
         messageId,
         groupMessage,
@@ -573,7 +555,10 @@ export class GroupManager {
       if (groupData.encryptionKey) {
         try {
           console.log(
-            `[GroupManager] 🔐 Creating encrypted group key for new member ${newMemberPub.slice(0, 20)}...`
+            `[GroupManager] 🔐 Creating encrypted group key for new member ${newMemberPub.slice(
+              0,
+              20
+            )}...`
           );
 
           const currentUserPair = (this.core.db.user as any)._?.sea;
@@ -631,7 +616,10 @@ export class GroupManager {
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       console.log(
-        `[GroupManager] ✅ Added member ${newMemberPub.slice(0, 20)}... to group ${groupId}`
+        `[GroupManager] ✅ Added member ${newMemberPub.slice(
+          0,
+          20
+        )}... to group ${groupId}`
       );
       return { success: true };
     } catch (error) {
@@ -666,42 +654,6 @@ export class GroupManager {
         error: `Failed to check membership: ${error}`,
       };
     }
-  }
-
-  /**
-   * Shared method to send messages to GunDB
-   */
-  private async sendToGunDB(
-    path: string,
-    messageId: string,
-    messageData: any,
-    type: "private" | "public" | "group"
-  ): Promise<void> {
-    let safePath: string;
-
-    if (type === "public") {
-      safePath = `room_${path}`;
-    } else if (type === "group") {
-      safePath = path;
-    } else {
-      safePath = createSafePath(path);
-    }
-
-    const messageNode = this.core.db.gun.get(safePath);
-
-    return new Promise<void>((resolve, reject) => {
-      try {
-        messageNode.get(messageId).put(messageData, (ack: any) => {
-          if (ack.err) {
-            reject(new Error(ack.err));
-          } else {
-            resolve();
-          }
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
   }
 
   private generateMessageId(): string {

@@ -1,3 +1,5 @@
+import { ShogunCore } from "shogun-core";
+
 /**
  * Utility functions for the messaging plugin
  */
@@ -17,7 +19,7 @@ export function generateMessageId(): string {
 export function generateGroupId(): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
-  return `group_${timestamp}_${random}`;
+  return `${timestamp}_${random}`;
 }
 
 /**
@@ -132,4 +134,45 @@ export function generateTokenRoomId(): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
   return `token_room_${timestamp}_${random}`;
+}
+
+/**
+ * Shared method to send messages to GunDB
+ */
+export async function sendToGunDB(
+  core: ShogunCore,
+  path: string,
+  messageId: string,
+  messageData: any,
+  type: "private" | "public" | "group"
+): Promise<void> {
+  if (!core || !core.db || !core.db.gun) {
+    throw new Error("Shogun Core or GunDB not initialized.");
+  }
+
+  let safePath: string;
+
+  if (type === "public") {
+    safePath = `room_${path}`;
+  } else if (type === "group") {
+    safePath = path;
+  } else {
+    safePath = createSafePath(path);
+  }
+
+  const messageNode = core.db.gun.get(safePath);
+
+  return new Promise<void>((resolve, reject) => {
+    try {
+      messageNode.get(messageId).put(messageData, (ack: any) => {
+        if (ack.err) {
+          reject(new Error(ack.err));
+        } else {
+          resolve();
+        }
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
