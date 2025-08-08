@@ -92,7 +92,6 @@ export interface GroupMessage {
   groupId: string;
   username?: string;
   encryptedContent: string; // Contenuto cifrato con encryption key
-  encryptedKeys: { [recipientPub: string]: string }; // Encryption keys cifrate per ogni membro
   signature?: string; // Firma digitale del messaggio
 }
 
@@ -102,8 +101,7 @@ export interface GroupData {
   members: string[]; // Array di public keys
   createdBy: string;
   createdAt: number;
-  encryptionKey: string; // Chiave di cifratura del gruppo
-  encryptedKeys?: { [memberPub: string]: string }; // Encrypted copies of group key for each member
+  encryptedKeys: { [memberPub: string]: string }; // Encrypted copies of group key for each member
 }
 
 // Listener types

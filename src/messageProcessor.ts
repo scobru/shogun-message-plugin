@@ -2,6 +2,7 @@ import { ShogunCore } from "shogun-core";
 import { MessageData, MessageListener } from "./types";
 import { createSafePath, cleanupExpiredEntries, limitMapSize } from "./utils";
 import { EncryptionManager } from "./encryption";
+import { GroupManager } from "./groupManager";
 
 /**
  * Message processing and listener management for the messaging plugin
@@ -9,27 +10,37 @@ import { EncryptionManager } from "./encryption";
 export class MessageProcessor {
   private core: ShogunCore;
   private encryptionManager: EncryptionManager;
+  private groupManager: GroupManager;
 
-  // Private message handling
+  // Message handling
   private messageListeners: MessageListener[] = [];
+  private groupMessageListenersInternal: GroupMessageListener[] = [];
   private _isListening = false;
   private processedMessageIds = new Map<string, number>();
-  private messageListener: any = null;
+  private privateMessageListener: any = null;
+  private groupMessageListeners = new Map<string, any>();
 
   // Configuration
   private readonly MAX_PROCESSED_MESSAGES = 1000;
   private readonly MESSAGE_TTL = 24 * 60 * 60 * 1000; // 24 ore
   private clearedConversations = new Set<string>();
 
-  constructor(core: ShogunCore, encryptionManager: EncryptionManager) {
+  private chatManager!: ChatManager;
+
+  constructor(core: ShogunCore, encryptionManager: EncryptionManager, groupManager: GroupManager) {
     this.core = core;
     this.encryptionManager = encryptionManager;
+    this.groupManager = groupManager;
+  }
+
+  public setChatManager(chatManager: ChatManager) {
+    this.chatManager = chatManager;
   }
 
   /**
    * Starts listening to private messages
    */
-  public startListening(): void {
+  public async startListening(): Promise<void> {
     if (!this.core.isLoggedIn() || this._isListening || !this.core.db.user) {
       return;
     }
@@ -45,11 +56,10 @@ export class MessageProcessor {
     this._isListening = true;
     const currentUserPub = currentUserPair.pub;
 
-    // Un solo listener sul canale dedicato
+    // Start listening for private messages
     const currentUserSafePath = createSafePath(currentUserPub);
-    const messageNode = this.core.db.gun.get(currentUserSafePath).map();
-
-    this.messageListener = messageNode.on(
+    const privateMessageNode = this.core.db.gun.get(currentUserSafePath).map();
+    this.privateMessageListener = privateMessageNode.on(
       async (messageData: any, messageId: string) => {
         await this.processIncomingMessage(
           messageData,
@@ -59,21 +69,111 @@ export class MessageProcessor {
         );
       }
     );
+
+    // Start listening for group messages
+    const myChats = await this.chatManager.getMyChats();
+    if (myChats.success && myChats.chats) {
+        for (const chat of myChats.chats) {
+            if (chat.type === 'group') {
+                const groupId = chat.id;
+                const groupMessagePath = `group-messages/${groupId}`;
+                const groupNode = this.core.db.gun.get(groupMessagePath).map();
+                const listener = groupNode.on(async (messageData: any, messageId: string) => {
+                    await this.processIncomingGroupMessage(messageData, messageId, currentUserPair);
+                });
+                this.groupMessageListeners.set(groupId, listener);
+            }
+        }
+    }
   }
 
   /**
-   * Stops listening to private messages
+   * Stops listening to private and group messages
    */
   public stopListening(): void {
     if (!this._isListening) return;
 
-    if (this.messageListener) {
-      this.messageListener.off();
-      this.messageListener = null;
+    // Stop private message listener
+    if (this.privateMessageListener) {
+      this.privateMessageListener.off();
+      this.privateMessageListener = null;
     }
+
+    // Stop all group message listeners
+    for (const [groupId, listener] of this.groupMessageListeners.entries()) {
+        listener.off();
+    }
+    this.groupMessageListeners.clear();
 
     this._isListening = false;
     this.processedMessageIds.clear();
+  }
+
+  public async processIncomingGroupMessage(
+    messageData: any,
+    messageId: string,
+    currentUserPair: any
+  ): Promise<void> {
+    try {
+        const message = JSON.parse(messageData);
+        const { from, content, timestamp, groupId, signature } = message;
+        const currentUserPub = currentUserPair.pub;
+
+        if (!from || from === currentUserPub || !groupId) {
+            return;
+        }
+
+        if (this.processedMessageIds.has(messageId)) {
+            return;
+        }
+        this.processedMessageIds.set(messageId, Date.now());
+
+        const groupData = await this.groupManager.getGroupData(groupId);
+        if (!groupData || !groupData.members.includes(currentUserPub)) {
+            this.processedMessageIds.delete(messageId);
+            return;
+        }
+
+        const isValid = await this.encryptionManager.verifyMessageSignature(content, signature, from);
+        if (!isValid) {
+            this.processedMessageIds.delete(messageId);
+            return;
+        }
+
+        const encryptedGroupKey = groupData.encryptedKeys[currentUserPub];
+        const creatorEpub = await this.encryptionManager.getRecipientEpub(groupData.createdBy);
+        const sharedSecret = await this.core.db.sea.secret(creatorEpub, currentUserPair);
+        const groupKey = await this.core.db.sea.decrypt(encryptedGroupKey, sharedSecret);
+
+        if (!groupKey) {
+            this.processedMessageIds.delete(messageId);
+            return;
+        }
+
+        const decryptedContent = await this.core.db.sea.decrypt(content, groupKey);
+
+        const decryptedMessage: MessageData = {
+            id: messageId,
+            from,
+            content: decryptedContent,
+            timestamp,
+            groupId,
+            signature,
+        };
+
+        this.messageListeners.forEach(callback => callback(decryptedMessage));
+        this.groupMessageListenersInternal.forEach(callback => callback(decryptedMessage as any));
+
+    } catch (error) {
+        this.processedMessageIds.delete(messageId);
+    }
+  }
+
+  public onGroupMessage(callback: GroupMessageListener): void {
+    if (typeof callback !== "function") {
+      return;
+    }
+    this.groupMessageListenersInternal.push(callback);
   }
 
   /**

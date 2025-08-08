@@ -31,11 +31,17 @@ describe("GroupManager", () => {
         sea: {
           secret: jest.fn().mockResolvedValue("shared_secret"),
           encrypt: jest.fn().mockResolvedValue("encrypted_key"),
+          decrypt: jest.fn().mockResolvedValue("decrypted_key"),
           sign: jest.fn().mockResolvedValue("signature"),
+          certify: jest.fn().mockResolvedValue("certified_key"),
         },
         gun: {
           get: jest.fn().mockReturnThis(),
-          put: jest.fn((data, cb) => cb({ err: null, ok: true })),
+          put: jest.fn((data, cb) => {
+            if (cb) {
+                cb({ err: null, ok: true });
+            }
+          }),
           once: jest.fn(),
         },
       },
@@ -132,15 +138,14 @@ describe("GroupManager", () => {
         expect(result.success).toBe(true);
         expect(result.messageId).toBeDefined();
 
-        // Verify that we are NOT re-encrypting keys
-        expect(mockEncryptionManager.getRecipientEpub).not.toHaveBeenCalled();
-        expect(mockCore.db.sea.secret).not.toHaveBeenCalled();
+        // Verify that the secret is derived to decrypt the key
+        expect(mockEncryptionManager.getRecipientEpub).toHaveBeenCalledWith("creator_pub");
+        expect(mockCore.db.sea.secret).toHaveBeenCalled();
 
-        // Verify that the message was sent to GunDB with the stored keys
-        expect(mockCore.db.gun.get).toHaveBeenCalledWith(`group_${groupId}`);
-        const sentMessage = mockCore.db.gun.put.mock.calls[0][0];
-        expect(sentMessage.encryptedKeys).toEqual(groupData.encryptedKeys);
-        expect(sentMessage.encryptedContent).toBe("encrypted_key"); // From our mock
+        // Verify that the message was sent to GunDB
+        expect(mockCore.db.gun.get).toHaveBeenCalledWith(`group-messages/${groupId}`);
+        const sentMessage = JSON.parse(mockCore.db.gun.put.mock.calls[0][0]);
+        expect(sentMessage.content).toBe("encrypted_key"); // From our mock
     });
 
     it("should fail if the user is not a member of the group", async () => {

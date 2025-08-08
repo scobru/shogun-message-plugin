@@ -4,6 +4,7 @@ import { MessageData, MessageListener } from "./types";
 import { MessageProcessor } from "./messageProcessor";
 import { EncryptionManager } from "./encryption";
 import { ChatManager } from "./chatManager";
+import { GroupManager } from "./groupManager";
 import { PublicRoomManager } from "./publicRoomManager";
 import { TokenRoomManager } from "./tokenRoomManager";
 
@@ -21,6 +22,7 @@ export class MessagingPlugin implements ShogunPlugin {
   private chatManager: ChatManager;
   private publicRoomManager: PublicRoomManager;
   private tokenRoomManager: TokenRoomManager;
+  private groupManager: GroupManager;
 
   constructor() {
     this.core = null as any;
@@ -29,6 +31,7 @@ export class MessagingPlugin implements ShogunPlugin {
     this.chatManager = null as any;
     this.publicRoomManager = null as any;
     this.tokenRoomManager = null as any;
+    this.groupManager = null as any;
   }
 
   /**
@@ -37,6 +40,7 @@ export class MessagingPlugin implements ShogunPlugin {
   public initialize(core: ShogunCore): void {
     this.core = core;
     this.encryptionManager = new EncryptionManager(core);
+    this.groupManager = new GroupManager(core, this.encryptionManager);
     this.publicRoomManager = new PublicRoomManager(
       core,
       this.encryptionManager
@@ -47,9 +51,33 @@ export class MessagingPlugin implements ShogunPlugin {
       this.tokenRoomManager,
       this.encryptionManager
     );
-    this.messageProcessor = new MessageProcessor(core, this.encryptionManager);
+    this.messageProcessor = new MessageProcessor(core, this.encryptionManager, this.groupManager);
+
+    this.groupManager.setChatManager(this.chatManager);
+    this.chatManager.setGroupManager(this.groupManager);
+    this.messageProcessor.setChatManager(this.chatManager);
 
     console.log("[MessagingPlugin] ✅ Plugin initialized successfully");
+  }
+
+  /**
+   * Creates a new group chat
+   */
+  public async createGroup(
+    groupName: string,
+    memberPubs: string[]
+  ): Promise<{ success: boolean; groupData?: any; error?: string }> {
+    return this.groupManager.createGroup(groupName, memberPubs);
+  }
+
+  /**
+   * Sends a message to a group
+   */
+  public async sendGroupMessage(
+    groupId: string,
+    messageContent: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    return this.groupManager.sendGroupMessage(groupId, messageContent);
   }
 
   /**

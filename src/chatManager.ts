@@ -3,6 +3,7 @@ import { TokenRoomData } from "./types";
 import { generateInviteLink } from "./utils";
 import { TokenRoomManager } from "./tokenRoomManager";
 import { EncryptionManager } from "./encryption";
+import { GroupManager } from "./groupManager";
 
 /**
  * Chat management functionality for the messaging plugin
@@ -11,6 +12,7 @@ export class ChatManager {
   private core: ShogunCore;
   private tokenRoomManager: TokenRoomManager;
   private encryptionManager: EncryptionManager;
+  private groupManager!: GroupManager;
 
   constructor(
     core: ShogunCore,
@@ -22,11 +24,15 @@ export class ChatManager {
     this.encryptionManager = encryptionManager;
   }
 
+  public setGroupManager(groupManager: GroupManager) {
+    this.groupManager = groupManager;
+  }
+
   /**
    * Joins a chat (private, public, or token room)
    */
   public async joinChat(
-    chatType: "private" | "public" | "token",
+    chatType: "private" | "public" | "token" | "group",
     chatId: string,
     token?: string
   ): Promise<{ success: boolean; chatData?: any; error?: string }> {
@@ -113,6 +119,26 @@ export class ChatManager {
           }
           return result;
 
+        case "group":
+            console.log(`[ChatManager] 🔍 joinChat: Processing group chat join`);
+            const groupData = await this.groupManager.getGroupData(chatId);
+            if (!groupData) {
+                return { success: false, error: "Group not found" };
+            }
+            await this.storeChatReferenceInUserProfile(
+                currentUserPub,
+                "group",
+                chatId,
+                groupData.name
+            );
+            return {
+                success: true,
+                chatData: {
+                    type: "group",
+                    id: chatId,
+                    name: groupData.name,
+                },
+            };
         default:
           return {
             success: false,
@@ -255,6 +281,42 @@ export class ChatManager {
         console.warn(`[ChatManager] ⚠️ Could not get token chats:`, error);
       }
 
+      // Get group chats
+      try {
+        const groupChats = await new Promise<any>((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            reject(new Error("Timeout getting group chats (10s)"));
+          }, 10000);
+
+          this.core.db.gun
+            .get(`user_${currentUserPub}`)
+            .get("chats")
+            .get("group")
+            .map()
+            .once((data: any) => {
+              clearTimeout(timeout);
+              resolve(data);
+            });
+        });
+
+        if (groupChats) {
+          Object.entries(groupChats).forEach(
+            ([chatId, chatData]: [string, any]) => {
+              if (chatData && chatData.id) {
+                chats.push({
+                  type: "group",
+                  id: chatId,
+                  name: chatData.name || `Group: ${chatId}`,
+                  joinedAt: chatData.joinedAt,
+                });
+              }
+            }
+          );
+        }
+      } catch (error) {
+        console.warn(`[ChatManager] ⚠️ Could not get group chats:`, error);
+      }
+
       console.log(`[ChatManager] ✅ Found ${chats.length} chats for user`);
       return { success: true, chats };
     } catch (error) {
@@ -268,7 +330,7 @@ export class ChatManager {
    */
   public async removeChatReferenceFromUserProfile(
     userPub: string,
-    chatType: "private" | "public" | "token",
+    chatType: "private" | "public" | "token" | "group",
     chatId: string
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -300,7 +362,7 @@ export class ChatManager {
    */
   public async storeChatReferenceInUserProfile(
     userPub: string,
-    chatType: "private" | "public" | "token",
+    chatType: "private" | "public" | "token" | "group",
     chatId: string,
     chatName?: string
   ): Promise<void> {
@@ -339,7 +401,7 @@ export class ChatManager {
    * Generates an invite link for a chat
    */
   public generateInviteLink(
-    chatType: "private" | "public" | "token",
+    chatType: "private" | "public" | "token" | "group",
     chatId: string,
     chatName?: string
   ): string {
