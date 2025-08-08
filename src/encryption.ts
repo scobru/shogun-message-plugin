@@ -72,19 +72,7 @@ export class EncryptionManager {
         return publicData.epub;
       }
 
-      // Third fallback: try to derive epub from pub if they follow the same pattern
-      if (recipientPub.includes(".")) {
-        const parts = recipientPub.split(".");
-        if (parts.length >= 2) {
-          const derivedEpub = parts[1]; // Use the second part as epub
-          console.log(
-            `[EncryptionManager] ⚠️ Using derived epub: ${derivedEpub.slice(0, 8)}...`
-          );
-          return derivedEpub;
-        }
-      }
-
-      // Fourth fallback: try to get from the user's profile data
+      // Third fallback: try to get from the user's profile data
       console.log(`[EncryptionManager] 🔄 Trying profile data fallback...`);
       const profileData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -105,7 +93,7 @@ export class EncryptionManager {
         return profileData.epub;
       }
 
-      // Fifth fallback: try to get from the user's root data
+      // Fourth fallback: try to get from the user's root data
       console.log(`[EncryptionManager] 🔄 Trying root data fallback...`);
       const rootData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -126,7 +114,7 @@ export class EncryptionManager {
         return rootData.epub;
       }
 
-      // Sixth fallback: try to get from the user's public key directly
+      // Fifth fallback: try to get from the user's public key directly
       console.log(`[EncryptionManager] 🔄 Trying direct pub key fallback...`);
       const directData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -147,29 +135,17 @@ export class EncryptionManager {
         return directData.epub;
       }
 
-      // If all else fails, try to create a temporary epub for testing
-      console.log(
-        `[EncryptionManager] ⚠️ No epub found, creating temporary epub for testing...`
+      // If all else fails, throw an error instead of creating a temporary epub
+      console.error(
+        `[EncryptionManager] ❌ Could not find epub for recipient: ${recipientPub.slice(0, 8)}...`
       );
-      const tempEpub = recipientPub + ".temp_epub_" + Date.now();
-      console.log(
-        `[EncryptionManager] ⚠️ Using temporary epub: ${tempEpub.slice(0, 8)}...`
+      console.error(
+        `[EncryptionManager] ❌ Tried all fallback methods but no epub found`
       );
 
-      // Store this temporary epub for future use
-      try {
-        recipientUser.get("is").put({ epub: tempEpub });
-        console.log(
-          `[EncryptionManager] 📝 Stored temporary epub for future use`
-        );
-      } catch (storeError) {
-        console.warn(
-          `[EncryptionManager] ⚠️ Could not store temporary epub:`,
-          storeError
-        );
-      }
-
-      return tempEpub;
+      throw new Error(
+        `Cannot find encryption public key (epub) for recipient: ${recipientPub.slice(0, 8)}...`
+      );
     } catch (error: any) {
       console.error(
         `[EncryptionManager] ❌ Error getting recipient epub:`,

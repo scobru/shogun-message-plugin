@@ -741,11 +741,11 @@ export class GroupManager {
         encryptedKeys: updatedEncryptedKeys,
       };
 
-      // Update group data in GunDB
+      // Update group data in GunDB with shorter timeout
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout updating group data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout updating group data (3s)"));
+        }, 3000);
 
         this.core.db.gun
           .get(`group_${groupId}`)
@@ -759,62 +759,46 @@ export class GroupManager {
           });
       });
 
-      // Remove group from the removed member's groups
+      // Remove group from the removed member's groups (non-blocking)
       const removedMemberGroupsNode = this.core.db.gun
         .get(`user_${memberPubToRemove}`)
         .get("groups");
-      await new Promise<void>((resolve) => {
-        removedMemberGroupsNode.get(groupId).put(null, (ack: any) => {
-          if (ack.err) {
-            console.warn(
-              `[GroupManager] ⚠️ Could not remove group from member ${memberPubToRemove.slice(0, 8)}...`
-            );
-          }
-          resolve();
-        });
+      removedMemberGroupsNode.get(groupId).put(null, (ack: any) => {
+        if (ack.err) {
+          console.warn(
+            `[GroupManager] ⚠️ Could not remove group from member ${memberPubToRemove.slice(0, 8)}...`
+          );
+        }
       });
 
-      // Update group data for remaining members
+      // Update group data for remaining members (non-blocking, fire and forget)
       for (const memberPub of updatedMembers) {
         const memberGroupsNode = this.core.db.gun
           .get(`user_${memberPub}`)
           .get("groups");
-        await new Promise<void>((resolve) => {
-          memberGroupsNode.get(groupId).put(updatedGroupData, (ack: any) => {
-            if (ack.err) {
-              console.warn(
-                `[GroupManager] ⚠️ Could not update group for member ${memberPub.slice(0, 8)}...`
-              );
-            }
-            resolve();
-          });
+        memberGroupsNode.get(groupId).put(updatedGroupData, (ack: any) => {
+          if (ack.err) {
+            console.warn(
+              `[GroupManager] ⚠️ Could not update group for member ${memberPub.slice(0, 8)}...`
+            );
+          }
         });
       }
 
-      // Remove chat reference from removed member's profile
+      // Remove chat reference from removed member's profile (non-blocking)
       if (this.chatManager) {
-        try {
-          console.log(
-            `[GroupManager] 🗑️ Removing chat reference from removed member's profile for group ${groupId}`
-          );
-          await this.chatManager.removeChatReferenceFromUserProfile(
+        this.chatManager
+          .removeChatReferenceFromUserProfile(
             memberPubToRemove,
             "group",
             groupId
-          );
-          console.log(
-            `[GroupManager] ✅ Chat reference removed from removed member's profile`
-          );
-        } catch (chatError) {
-          console.warn(
-            `[GroupManager] ⚠️ Could not remove chat reference from removed member:`,
-            chatError
-          );
-        }
-      } else {
-        console.warn(
-          `[GroupManager] ⚠️ ChatManager not available, chat reference not removed from removed member`
-        );
+          )
+          .catch((chatError) => {
+            console.warn(
+              `[GroupManager] ⚠️ Could not remove chat reference from removed member:`,
+              chatError
+            );
+          });
       }
 
       console.log(
@@ -906,11 +890,11 @@ export class GroupManager {
         encryptedKeys: updatedEncryptedKeys,
       };
 
-      // Update group data in GunDB
+      // Update group data in GunDB with shorter timeout
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout updating group data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout updating group data (3s)"));
+        }, 3000);
 
         this.core.db.gun
           .get(`group_${groupId}`)
@@ -924,62 +908,42 @@ export class GroupManager {
           });
       });
 
-      // Remove group from current user's groups
+      // Remove group from current user's groups (non-blocking)
       const currentUserGroupsNode = this.core.db.gun
         .get(`user_${currentUserPub}`)
         .get("groups");
-      await new Promise<void>((resolve) => {
-        currentUserGroupsNode.get(groupId).put(null, (ack: any) => {
-          if (ack.err) {
-            console.warn(
-              `[GroupManager] ⚠️ Could not remove group from current user`
-            );
-          }
-          resolve();
-        });
+      currentUserGroupsNode.get(groupId).put(null, (ack: any) => {
+        if (ack.err) {
+          console.warn(
+            `[GroupManager] ⚠️ Could not remove group from current user`
+          );
+        }
       });
 
-      // Update group data for remaining members
+      // Remove chat reference from user's profile (non-blocking)
+      if (this.chatManager) {
+        this.chatManager
+          .removeChatReferenceFromUserProfile(currentUserPub, "group", groupId)
+          .catch((chatError) => {
+            console.warn(
+              `[GroupManager] ⚠️ Could not remove chat reference:`,
+              chatError
+            );
+          });
+      }
+
+      // Update group data for remaining members (non-blocking, fire and forget)
       for (const memberPub of updatedMembers) {
         const memberGroupsNode = this.core.db.gun
           .get(`user_${memberPub}`)
           .get("groups");
-        await new Promise<void>((resolve) => {
-          memberGroupsNode.get(groupId).put(updatedGroupData, (ack: any) => {
-            if (ack.err) {
-              console.warn(
-                `[GroupManager] ⚠️ Could not update group for member ${memberPub.slice(0, 8)}...`
-              );
-            }
-            resolve();
-          });
+        memberGroupsNode.get(groupId).put(updatedGroupData, (ack: any) => {
+          if (ack.err) {
+            console.warn(
+              `[GroupManager] ⚠️ Could not update group for member ${memberPub.slice(0, 8)}...`
+            );
+          }
         });
-      }
-
-      // Remove chat reference from user's profile
-      if (this.chatManager) {
-        try {
-          console.log(
-            `[GroupManager] 🗑️ Removing chat reference from user profile for group ${groupId}`
-          );
-          await this.chatManager.removeChatReferenceFromUserProfile(
-            currentUserPub,
-            "group",
-            groupId
-          );
-          console.log(
-            `[GroupManager] ✅ Chat reference removed from user profile`
-          );
-        } catch (chatError) {
-          console.warn(
-            `[GroupManager] ⚠️ Could not remove chat reference:`,
-            chatError
-          );
-        }
-      } else {
-        console.warn(
-          `[GroupManager] ⚠️ ChatManager not available, chat reference not removed`
-        );
       }
 
       console.log(
@@ -1037,66 +1001,39 @@ export class GroupManager {
         `[GroupManager] 💥 Deleting group ${groupId} by creator ${currentUserPub.slice(0, 20)}...`
       );
 
-      // Remove group from all members' groups
+      // Remove group from all members' groups (non-blocking)
       for (const memberPub of groupData.members) {
         const memberGroupsNode = this.core.db.gun
           .get(`user_${memberPub}`)
           .get("groups");
-        await new Promise<void>((resolve) => {
-          memberGroupsNode.get(groupId).put(null, (ack: any) => {
-            if (ack.err) {
-              console.warn(
-                `[GroupManager] ⚠️ Could not remove group from member ${memberPub.slice(0, 8)}...`
-              );
-            }
-            resolve();
-          });
+        memberGroupsNode.get(groupId).put(null, (ack: any) => {
+          if (ack.err) {
+            console.warn(
+              `[GroupManager] ⚠️ Could not remove group from member ${memberPub.slice(0, 8)}...`
+            );
+          }
         });
       }
 
-      // Remove chat references from all members' profiles
+      // Remove chat references from all members' profiles (non-blocking)
       if (this.chatManager) {
-        try {
-          console.log(
-            `[GroupManager] 🗑️ Removing chat references from all members' profiles for group ${groupId}`
-          );
-          for (const memberPub of groupData.members) {
-            try {
-              await this.chatManager.removeChatReferenceFromUserProfile(
-                memberPub,
-                "group",
-                groupId
-              );
-              console.log(
-                `[GroupManager] ✅ Chat reference removed from member ${memberPub.slice(0, 20)}...`
-              );
-            } catch (memberError) {
+        for (const memberPub of groupData.members) {
+          this.chatManager
+            .removeChatReferenceFromUserProfile(memberPub, "group", groupId)
+            .catch((memberError) => {
               console.warn(
                 `[GroupManager] ⚠️ Could not remove chat reference from member ${memberPub.slice(0, 8)}...:`,
                 memberError
               );
-            }
-          }
-          console.log(
-            `[GroupManager] ✅ Chat references removed from all members' profiles`
-          );
-        } catch (chatError) {
-          console.warn(
-            `[GroupManager] ⚠️ Could not remove chat references:`,
-            chatError
-          );
+            });
         }
-      } else {
-        console.warn(
-          `[GroupManager] ⚠️ ChatManager not available, chat references not removed`
-        );
       }
 
-      // Delete the group data entirely
+      // Delete the group data entirely with shorter timeout
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout deleting group data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout deleting group data (3s)"));
+        }, 3000);
 
         // Use a more specific approach to delete the group data
         const groupNode = this.core.db.gun.get(`group_${groupId}`);

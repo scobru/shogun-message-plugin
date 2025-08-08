@@ -155,6 +155,18 @@ export class MessageProcessor {
   }
 
   /**
+   * Restarts listening to group messages (useful after leaving/rejoining groups)
+   */
+  public restartListeningGroups(): void {
+    console.log(`[MessageProcessor] 🔄 Restarting group message listener`);
+    this.stopListeningGroups();
+    // Clear processed group message IDs to allow reprocessing when rejoining groups
+    this.processedGroupMessageIds.clear();
+    console.log(`[MessageProcessor] 🧹 Cleared processed group message IDs`);
+    this.startListeningGroups();
+  }
+
+  /**
    * Starts listening to a specific group
    */
   private async startListeningToGroup(
@@ -377,12 +389,28 @@ export class MessageProcessor {
         console.log(
           `[MessageProcessor] 🔐 Getting creator epub for: ${groupData.createdBy.slice(0, 8)}...`
         );
-        const creatorEpub = await this.encryptionManager.getRecipientEpub(
-          groupData.createdBy
-        );
-        console.log(
-          `[MessageProcessor] 🔐 Creator epub retrieved: ${creatorEpub.slice(0, 8)}...`
-        );
+
+        let creatorEpub: string;
+        try {
+          creatorEpub = await this.encryptionManager.getRecipientEpub(
+            groupData.createdBy
+          );
+          console.log(
+            `[MessageProcessor] 🔐 Creator epub retrieved: ${creatorEpub.slice(0, 8)}...`
+          );
+        } catch (epubError) {
+          console.error(
+            `[MessageProcessor] ❌ Could not get creator epub:`,
+            epubError
+          );
+          console.error(
+            `[MessageProcessor] ❌ Creator pub: ${groupData.createdBy}`
+          );
+          console.error(
+            `[MessageProcessor] ❌ This may indicate the creator's epub is not published or accessible`
+          );
+          return;
+        }
 
         console.log(
           `[MessageProcessor] 🔐 Generating shared secret with creator...`
@@ -395,10 +423,24 @@ export class MessageProcessor {
           `[MessageProcessor] 🔐 Shared secret generated: ${sharedSecret ? "success" : "failed"}`
         );
 
+        if (!sharedSecret) {
+          console.error(
+            `[MessageProcessor] ❌ Could not generate shared secret with creator`
+          );
+          console.error(
+            `[MessageProcessor] ❌ Creator pub: ${groupData.createdBy}`
+          );
+          console.error(`[MessageProcessor] ❌ Creator epub: ${creatorEpub}`);
+          console.error(
+            `[MessageProcessor] ❌ Current user pair available: ${!!currentUserPair}`
+          );
+          return;
+        }
+
         console.log(`[MessageProcessor] 🔐 Decrypting group key...`);
         decryptedGroupKey = await this.core.db.sea.decrypt(
           encryptedKey,
-          sharedSecret || ""
+          sharedSecret
         );
 
         if (!decryptedGroupKey) {
@@ -409,6 +451,9 @@ export class MessageProcessor {
           console.error(`[MessageProcessor] ❌ Creator epub: ${creatorEpub}`);
           console.error(
             `[MessageProcessor] ❌ Shared secret available: ${!!sharedSecret}`
+          );
+          console.error(
+            `[MessageProcessor] ❌ Encrypted key length: ${encryptedKey?.length || 0}`
           );
           return;
         }
@@ -712,5 +757,30 @@ export class MessageProcessor {
    */
   public getClearedConversationsCount(): number {
     return this.clearedConversations.size;
+  }
+
+  /**
+   * Clears processed message IDs for a specific group (useful when rejoining)
+   */
+  public clearProcessedGroupMessageIds(groupId?: string): void {
+    if (groupId) {
+      // Clear only messages for this specific group
+      const keysToDelete: string[] = [];
+      this.processedGroupMessageIds.forEach((timestamp, messageId) => {
+        if (messageId.includes(groupId)) {
+          keysToDelete.push(messageId);
+        }
+      });
+      keysToDelete.forEach((key) => this.processedGroupMessageIds.delete(key));
+      console.log(
+        `[MessageProcessor] 🧹 Cleared ${keysToDelete.length} processed message IDs for group: ${groupId}`
+      );
+    } else {
+      // Clear all processed group message IDs
+      this.processedGroupMessageIds.clear();
+      console.log(
+        `[MessageProcessor] 🧹 Cleared all processed group message IDs`
+      );
+    }
   }
 }

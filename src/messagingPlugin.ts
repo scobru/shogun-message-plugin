@@ -245,6 +245,10 @@ export class MessagingPlugin extends BasePlugin {
     this.messageProcessor.removeGroupMessageListener(callback);
   }
 
+  public restartListeningGroups(): void {
+    this.messageProcessor.restartListeningGroups();
+  }
+
   public async addMemberToGroup(
     groupId: string,
     newMemberPub: string
@@ -332,6 +336,128 @@ export class MessagingPlugin extends BasePlugin {
 
   public async getTokenRoomData(roomId: string): Promise<TokenRoomData | null> {
     return this.tokenRoomManager.getTokenRoomData(roomId);
+  }
+
+  // ===== ENCRYPTION KEY MANAGEMENT =====
+
+  /**
+   * Manually publish the current user's encryption public key (epub) to the network
+   * This is important for group messaging to work properly
+   */
+  public async publishUserEpub(): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      await this.encryptionManager.ensureUserEpubPublished();
+      return { success: true };
+    } catch (error: any) {
+      console.error(`[MessagingPlugin] ❌ Error publishing user epub:`, error);
+      return {
+        success: false,
+        error: error.message || "Failed to publish encryption key",
+      };
+    }
+  }
+
+  /**
+   * Check if a user's encryption public key (epub) is available on the network
+   * This helps diagnose group messaging issues
+   */
+  public async checkUserEpubAvailability(userPub: string): Promise<{
+    available: boolean;
+    epub?: string;
+    error?: string;
+  }> {
+    try {
+      const epub = await this.encryptionManager.getRecipientEpub(userPub);
+      return { available: true, epub };
+    } catch (error: any) {
+      return {
+        available: false,
+        error: error.message || "Encryption key not found",
+      };
+    }
+  }
+
+  /**
+   * Get the current user's encryption public key (epub)
+   */
+  public getCurrentUserEpub(): string | null {
+    if (!this.core || !this.core.db || !this.core.db.user) {
+      return null;
+    }
+    const currentUserPair = (this.core.db.user as any)._?.sea;
+    return currentUserPair?.epub || null;
+  }
+
+  /**
+   * Diagnose group messaging issues by checking if all group members have their epub published
+   * This helps identify why group messages might not be decrypting
+   */
+  public async diagnoseGroupMessaging(groupId: string): Promise<{
+    success: boolean;
+    groupData?: any;
+    memberStatus: Array<{
+      pub: string;
+      epubAvailable: boolean;
+      epub?: string;
+      error?: string;
+    }>;
+    error?: string;
+  }> {
+    try {
+      // Get group data
+      const groupData = await this.groupManager.getGroupData(groupId);
+      if (!groupData) {
+        return {
+          success: false,
+          memberStatus: [],
+          error: "Group not found",
+        };
+      }
+
+      // Check each member's epub availability
+      const memberStatus = await Promise.all(
+        groupData.members.map(async (memberPub) => {
+          try {
+            const result = await this.checkUserEpubAvailability(memberPub);
+            return {
+              pub: memberPub,
+              epubAvailable: result.available,
+              epub: result.epub,
+              error: result.error,
+            };
+          } catch (error: any) {
+            return {
+              pub: memberPub,
+              epubAvailable: false,
+              error: error.message || "Unknown error",
+            };
+          }
+        })
+      );
+
+      return {
+        success: true,
+        groupData,
+        memberStatus,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        memberStatus: [],
+        error: error.message || "Unknown error",
+      };
+    }
+  }
+
+  /**
+   * Clear processed group message IDs for a specific group
+   * This is useful when rejoining a group to ensure new messages are processed
+   */
+  public clearProcessedGroupMessageIds(groupId?: string): void {
+    this.messageProcessor.clearProcessedGroupMessageIds(groupId);
   }
 
   // ===== CHAT MANAGEMENT =====
