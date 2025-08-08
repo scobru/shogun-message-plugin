@@ -34,8 +34,8 @@ export class EncryptionManager {
 
       const userData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout getting user data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout getting user data (5s)"));
+        }, 5000);
 
         recipientUser.get("is").once((data: any) => {
           clearTimeout(timeout);
@@ -55,8 +55,8 @@ export class EncryptionManager {
       console.log(`[EncryptionManager] 🔄 Trying public space fallback...`);
       const publicData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout getting public data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout getting public data (5s)"));
+        }, 5000);
 
         this.core.db.gun.get("~" + recipientPub).once((data: any) => {
           clearTimeout(timeout);
@@ -88,8 +88,8 @@ export class EncryptionManager {
       console.log(`[EncryptionManager] 🔄 Trying profile data fallback...`);
       const profileData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout getting profile data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout getting profile data (5s)"));
+        }, 5000);
 
         recipientUser.get("profile").once((data: any) => {
           clearTimeout(timeout);
@@ -109,8 +109,8 @@ export class EncryptionManager {
       console.log(`[EncryptionManager] 🔄 Trying root data fallback...`);
       const rootData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout getting root data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout getting root data (5s)"));
+        }, 5000);
 
         recipientUser.get("~").once((data: any) => {
           clearTimeout(timeout);
@@ -130,8 +130,8 @@ export class EncryptionManager {
       console.log(`[EncryptionManager] 🔄 Trying direct pub key fallback...`);
       const directData = await new Promise<any>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error("Timeout getting direct data (15s)"));
-        }, 15000);
+          reject(new Error("Timeout getting direct data (5s)"));
+        }, 5000);
 
         this.core.db.gun.get(recipientPub).once((data: any) => {
           clearTimeout(timeout);
