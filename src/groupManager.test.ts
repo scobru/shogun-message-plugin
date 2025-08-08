@@ -98,7 +98,7 @@ describe("GroupManager", () => {
         const result = await groupManager.createGroup(groupName, memberPubs);
 
         expect(result.success).toBe(false);
-        expect(result.error).toContain("Impossibile creare le chiavi di cifratura per i seguenti membri: member1_pub");
+        expect(result.error).toBe("Impossibile creare le chiavi di cifratura per i seguenti membri: member1_pub. Creazione del gruppo annullata.");
         expect(mockCore.db.gun.put).not.toHaveBeenCalled(); // Ensure group is not saved
     });
   });
