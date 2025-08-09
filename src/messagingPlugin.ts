@@ -99,9 +99,14 @@ export class MessagingPlugin implements ShogunPlugin {
         id: messageId,
       };
 
-      // Sign the message
+      // **FIX: Sign a canonical representation of the message data**
+      const dataToSign = JSON.stringify({
+        content: messageData.content,
+        timestamp: messageData.timestamp,
+        id: messageData.id,
+      });
       messageData.signature = await this.core.db.sea.sign(
-        messageData.content,
+        dataToSign,
         currentUserPair
       );
 

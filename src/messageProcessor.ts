@@ -161,16 +161,6 @@ export class MessageProcessor {
         return;
       }
 
-      const isValid = await this.encryptionManager.verifyMessageSignature(
-        content,
-        signature,
-        from
-      );
-      if (!isValid) {
-        this.processedMessageIds.delete(messageId);
-        return;
-      }
-
       const encryptedGroupKey = groupData.encryptedKeys[currentUserPub];
       const creatorEpub = await this.encryptionManager.getRecipientEpub(
         groupData.createdBy
@@ -197,6 +187,18 @@ export class MessageProcessor {
         content,
         groupKey
       );
+
+      // **FIX: Verify signature against the DECRYPTED content**
+      const isValid = await this.encryptionManager.verifyMessageSignature(
+        decryptedContent,
+        signature,
+        from
+      );
+      if (!isValid) {
+        console.warn(`[MessageProcessor] ⚠️ Invalid signature for group message ${messageId}`);
+        this.processedMessageIds.delete(messageId);
+        return;
+      }
 
       const decryptedMessage: MessageData = {
         id: messageId,
@@ -259,6 +261,34 @@ export class MessageProcessor {
         currentUserPair,
         messageData.from
       );
+
+      // **FIX: Verify the signature on the decrypted message**
+      if (decryptedMessage.signature) {
+        // **FIX: Verify signature against the same canonical representation**
+        const dataToVerify = JSON.stringify({
+          content: decryptedMessage.content,
+          timestamp: decryptedMessage.timestamp,
+          id: decryptedMessage.id,
+        });
+        const isValid = await this.encryptionManager.verifyMessageSignature(
+          dataToVerify,
+          decryptedMessage.signature,
+          decryptedMessage.from
+        );
+
+        if (!isValid) {
+          console.warn(
+            `[MessageProcessor] ⚠️ Invalid signature for private message ${messageId}`
+          );
+          this.processedMessageIds.delete(messageId);
+          return;
+        }
+      } else {
+        // This case can be removed once all clients are updated
+        console.warn(
+          `[MessageProcessor] ⚠️ Message ${messageId} without signature, skipping verification for compatibility.`
+        );
+      }
 
       // Check if this conversation has been cleared AFTER decryption
       if (this.isConversationCleared(decryptedMessage.from, currentUserPub)) {

@@ -204,6 +204,12 @@ export class GroupManager {
         };
       }
 
+      // **FIX: Sign the plaintext content BEFORE encryption**
+      const signature = await this.core.db.sea.sign(
+        messageContent,
+        currentUserPair
+      );
+
       // Encrypt the message with the group key
       const encryptedContent = await this.core.db.sea.encrypt(
         messageContent,
@@ -217,10 +223,7 @@ export class GroupManager {
         content: encryptedContent,
         timestamp: Date.now(),
         groupId: groupId,
-        signature: await this.core.db.sea.sign(
-          encryptedContent,
-          currentUserPair
-        ),
+        signature: signature, // Use signature of plaintext
       };
 
       // Send to the group's message node
