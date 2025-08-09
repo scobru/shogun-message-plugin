@@ -1,5 +1,4 @@
 import { ShogunCore } from "shogun-core";
-import { PluginCategory } from "shogun-core";
 
 /**
  * Base class for Shogun plugins
@@ -11,7 +10,8 @@ export abstract class BasePlugin {
   abstract name: string;
   abstract version: string;
   abstract description: string;
-  abstract _category?: PluginCategory;
+  // Use loose typing to avoid hard dependency on specific core type exports
+  abstract _category?: string;
 
   /**
    * Initialize the plugin with the core instance

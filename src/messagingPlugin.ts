@@ -1,5 +1,5 @@
 // Plugin di messaggistica E2E corretto per GunDB
-import { ShogunCore, ShogunPlugin } from "shogun-core";
+import { ShogunCore } from "shogun-core";
 import { MessageProcessor } from "./messageProcessor";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
@@ -11,7 +11,7 @@ import { sendToGunDB } from "./utils";
  * Messaging plugin for Shogun SDK - Protocol layer only
  * Provides end-to-end encrypted messaging capabilities
  */
-export class MessagingPlugin implements ShogunPlugin {
+export class MessagingPlugin {
   public readonly name = "messaging";
   public readonly version = "1.0.0";
 

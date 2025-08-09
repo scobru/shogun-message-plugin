@@ -50,7 +50,8 @@
   },
   "dependencies": {
     "gun": "^0.2020.1235",
-    "shogun-core": "^1.6.16"
+    "shogun-core": "^1.6.16",
+    "yarn": "^1.22.22"
   },
   "devDependencies": {
     "@types/jest": "^29.5.5",
