@@ -14,6 +14,16 @@ import {
 import { EncryptionManager } from "./encryption";
 
 /**
+ * Configuration options to improve developer UX/observability without changing behavior
+ */
+export type TokenRoomStatusEvent = { type: string; [key: string]: any };
+export interface TokenRoomManagerOptions {
+  onStatus?: (event: TokenRoomStatusEvent) => void;
+  messageTTLMs?: number;
+  maxProcessedMessages?: number;
+}
+
+/**
  * Token-based encrypted room management functionality
  */
 export class TokenRoomManager {
@@ -22,14 +32,42 @@ export class TokenRoomManager {
   private tokenRoomListeners: TokenRoomMessageListener[] = [];
   private _isListeningTokenRooms = false;
   private processedTokenMessageIds = new Map<string, number>();
-  private readonly MAX_PROCESSED_MESSAGES = 1000;
-  private readonly MESSAGE_TTL = 24 * 60 * 60 * 1000; // 24 ore
+  private readonly MAX_PROCESSED_MESSAGES: number;
+  private readonly MESSAGE_TTL: number; // default 24h
   private tokenRoomListener: any = null;
   private activeTokenRooms = new Map<string, string>(); // roomId -> token
+  private options: TokenRoomManagerOptions;
+  private roomMessageHandlers = new Map<string, any>(); // roomId -> gun.on chain
 
-  constructor(core: ShogunCore, encryptionManager: EncryptionManager) {
+  constructor(
+    core: ShogunCore,
+    encryptionManager: EncryptionManager,
+    options: TokenRoomManagerOptions = {}
+  ) {
     this.core = core;
     this.encryptionManager = encryptionManager;
+    this.options = options || {};
+    this.MAX_PROCESSED_MESSAGES =
+      typeof options.maxProcessedMessages === "number"
+        ? options.maxProcessedMessages
+        : 1000;
+    this.MESSAGE_TTL =
+      typeof options.messageTTLMs === "number"
+        ? options.messageTTLMs
+        : 24 * 60 * 60 * 1000;
+  }
+
+  /**
+   * Emits non-intrusive status events for UI/telemetry consumers
+   */
+  private emitStatus(event: { type: string; [key: string]: any }): void {
+    try {
+      if (this.options?.onStatus) {
+        this.options.onStatus(event);
+      }
+    } catch (_) {
+      // swallow status errors to avoid impacting core flow
+    }
   }
 
   /**
@@ -55,6 +93,7 @@ export class TokenRoomManager {
     }
 
     try {
+      this.emitStatus({ type: "room:create:start", roomName });
       const currentUserPair = (this.core.db.user as any)._?.sea;
       if (!currentUserPair) {
         return {
@@ -68,15 +107,18 @@ export class TokenRoomManager {
       const token = generateSecureToken();
 
       // Crea i dati della stanza
-      const roomData: TokenRoomData = {
+      const roomDataBase: TokenRoomData = {
         id: roomId,
         name: roomName,
         token,
         createdBy: creatorPub,
         createdAt: Date.now(),
-        description,
-        maxParticipants,
-      };
+      } as TokenRoomData;
+      if (description !== undefined)
+        (roomDataBase as any).description = description;
+      if (maxParticipants !== undefined)
+        (roomDataBase as any).maxParticipants = maxParticipants;
+      const roomData: TokenRoomData = roomDataBase;
 
       // Salva la stanza nel database
       let saveAttempts = 0;
@@ -84,6 +126,10 @@ export class TokenRoomManager {
 
       while (saveAttempts < maxSaveAttempts) {
         try {
+          this.emitStatus({
+            type: "room:create:saveAttempt",
+            attempt: saveAttempts + 1,
+          });
           await new Promise<void>((resolve, reject) => {
             const timeout = setTimeout(() => {
               reject(
@@ -93,21 +139,24 @@ export class TokenRoomManager {
               );
             }, 15000);
 
-            this.core.db.gun
-              .get(`token_room_${roomId}`)
-              .put(roomData, (ack: any) => {
-                clearTimeout(timeout);
-                if (ack.err) {
-                  reject(new Error(`Error saving room: ${ack.err}`));
-                } else {
-                  resolve();
-                }
-              });
+            this.core.db.gun.get(roomId).put(roomData, (ack: any) => {
+              clearTimeout(timeout);
+              if (ack.err) {
+                reject(new Error(`Error saving room: ${ack.err}`));
+              } else {
+                resolve();
+              }
+            });
           });
 
           break;
         } catch (error) {
           saveAttempts++;
+          this.emitStatus({
+            type: "room:create:saveRetry",
+            attempt: saveAttempts,
+            error: String(error),
+          });
           console.warn(
             `[TokenRoomManager] ⚠️ Save attempt ${saveAttempts} failed:`,
             error
@@ -127,22 +176,22 @@ export class TokenRoomManager {
       const creatorNode = this.core.db.gun
         .get(`user_${creatorPub}`)
         .get("tokenRooms");
-      await new Promise<void>((resolve, reject) => {
-        creatorNode.get(roomId).put(roomData, (ack: any) => {
-          if (ack.err) {
-            console.warn(
-              `[TokenRoomManager] ⚠️ Could not publish room to creator`
-            );
-          }
+      await new Promise<void>((resolve) => {
+        creatorNode.get(roomId).put(roomData, (_ack: any) => {
           resolve();
         });
       });
 
+      this.emitStatus({ type: "room:create:success", roomId, roomName });
       console.log(
         `[TokenRoomManager] ✅ Token room created successfully: ${roomId}`
       );
       return { success: true, roomData };
     } catch (error: any) {
+      this.emitStatus({
+        type: "room:create:error",
+        error: error?.message || String(error),
+      });
       console.error(`[TokenRoomManager] ❌ Error creating token room:`, error);
       return {
         success: false,
@@ -176,6 +225,7 @@ export class TokenRoomManager {
     }
 
     try {
+      this.emitStatus({ type: "message:send:start", roomId });
       const currentUserPair = (this.core.db.user as any)._?.sea;
       if (!currentUserPair) {
         return {
@@ -215,16 +265,37 @@ export class TokenRoomManager {
       tokenRoomMessage.signature = signature;
 
       // Invia il messaggio alla stanza
-      await this.sendToGunDB(
-        `token_room_${roomId}`,
-        messageId,
-        tokenRoomMessage,
-        "token"
-      );
+      await this.sendToGunDB(roomId, messageId, tokenRoomMessage, "token");
+
+      this.emitStatus({ type: "message:send:success", roomId, messageId });
+      // Assicura l'ascolto immediato della stanza in questa sessione
+      try {
+        this.activeTokenRooms.set(roomId, token);
+        const currentUserPairRef = (this.core.db.user as any)?._?.sea;
+        const currentUserPubRef = currentUserPairRef?.pub;
+        if (currentUserPairRef && currentUserPubRef) {
+          await this.startListeningToTokenRoom(
+            roomId,
+            token,
+            currentUserPairRef,
+            currentUserPubRef
+          );
+        }
+      } catch (listenError) {
+        console.warn(
+          `[TokenRoomManager] ⚠️ Could not attach listener after send:`,
+          listenError
+        );
+      }
 
       console.log(`[TokenRoomManager] ✅ Token room message sent successfully`);
       return { success: true, messageId };
     } catch (error: any) {
+      this.emitStatus({
+        type: "message:send:error",
+        roomId,
+        error: error?.message || String(error),
+      });
       console.error(
         `[TokenRoomManager] ❌ Error sending token room message:`,
         error
@@ -247,7 +318,7 @@ export class TokenRoomManager {
           reject(new Error("Timeout getting room data (15s)"));
         }, 15000);
 
-        this.core.db.gun.get(`token_room_${roomId}`).once((data: any) => {
+        this.core.db.gun.get(roomId).once((data: any) => {
           clearTimeout(timeout);
           resolve(data);
         });
@@ -289,6 +360,7 @@ export class TokenRoomManager {
       return { success: false, error: "User not authenticated" };
     }
 
+    this.emitStatus({ type: "room:join:start", roomId });
     console.log(
       `[TokenRoomManager] 🔍 joinTokenRoom called for user ${currentUserPub.slice(0, 20)}... to room ${roomId}`
     );
@@ -298,6 +370,11 @@ export class TokenRoomManager {
       const roomData = await this.getTokenRoomData(roomId);
       if (!roomData) {
         console.log(`[TokenRoomManager] ❌ Room not found: ${roomId}`);
+        this.emitStatus({
+          type: "room:join:error",
+          roomId,
+          error: "Room not found or invitation invalid",
+        });
         return {
           success: false,
           error: "Room not found or invitation invalid",
@@ -307,13 +384,35 @@ export class TokenRoomManager {
       // Verify token
       if (roomData.token !== token) {
         console.log(`[TokenRoomManager] ❌ Invalid token for room: ${roomId}`);
+        this.emitStatus({
+          type: "room:join:error",
+          roomId,
+          error: "Invalid token for this room",
+        });
         return {
           success: false,
           error: "Invalid token for this room",
         };
       }
 
+      this.emitStatus({ type: "room:join:verified", roomId });
       console.log(`[TokenRoomManager] ✅ Token verified for room: ${roomId}`);
+
+      // Publish the room under the user's public graph for listeners
+      try {
+        await new Promise<void>((resolve) => {
+          this.core.db.gun
+            .get(`user_${currentUserPub}`)
+            .get("tokenRooms")
+            .get(roomId)
+            .put(roomData, (_ack: any) => resolve());
+        });
+      } catch (e) {
+        console.warn(
+          `[TokenRoomManager] ⚠️ Could not publish joined room to user graph:`,
+          e
+        );
+      }
 
       // Store room reference in user profile
       console.log(
@@ -332,11 +431,35 @@ export class TokenRoomManager {
       // Add to active rooms for this session
       this.activeTokenRooms.set(roomId, token);
 
+      // Start listening to this room immediately for this session
+      try {
+        const currentUserPair = (this.core.db.user as any)._?.sea;
+        if (currentUserPair) {
+          await this.startListeningToTokenRoom(
+            roomId,
+            token,
+            currentUserPair,
+            currentUserPub
+          );
+        }
+      } catch (e) {
+        console.warn(
+          `[TokenRoomManager] ⚠️ Could not start listening to joined room immediately:`,
+          e
+        );
+      }
+
+      this.emitStatus({ type: "room:join:success", roomId });
       console.log(
         `[TokenRoomManager] ✅ Successfully joined token room ${roomId}`
       );
       return { success: true, roomData };
     } catch (error) {
+      this.emitStatus({
+        type: "room:join:error",
+        roomId,
+        error: String(error),
+      });
       console.error(`[TokenRoomManager] ❌ Error joining token room:`, error);
       return { success: false, error: `Failed to join token room: ${error}` };
     }
@@ -365,6 +488,7 @@ export class TokenRoomManager {
     this._isListeningTokenRooms = true;
     const currentUserPub = currentUserPair.pub;
 
+    this.emitStatus({ type: "room:listeners:start" });
     console.log(`[TokenRoomManager] 🔊 Starting token room listener`);
 
     // Listener per stanze token dell'utente
@@ -385,6 +509,30 @@ export class TokenRoomManager {
         }
       }
     );
+
+    // Also attach listeners to any rooms already active in this session
+    if (this.activeTokenRooms.size > 0) {
+      this.activeTokenRooms.forEach(async (tok, rid) => {
+        try {
+          await this.startListeningToTokenRoom(
+            rid,
+            tok,
+            currentUserPair,
+            currentUserPub
+          );
+        } catch (e) {
+          console.warn(
+            `[TokenRoomManager] ⚠️ Failed to attach listener to active room ${rid}:`,
+            e
+          );
+        }
+      });
+    }
+
+    this.emitStatus({
+      type: "room:listeners:ready",
+      activeRooms: this.activeTokenRooms.size,
+    });
   }
 
   /**
@@ -400,6 +548,7 @@ export class TokenRoomManager {
 
     this._isListeningTokenRooms = false;
     this.processedTokenMessageIds.clear();
+    this.emitStatus({ type: "room:listeners:stopped" });
     console.log(`[TokenRoomManager] 🔇 Stopped token room listener`);
   }
 
@@ -414,18 +563,21 @@ export class TokenRoomManager {
   ): Promise<void> {
     console.log(`[TokenRoomManager] 🔊 Listening to token room: ${roomId}`);
 
-    const roomMessagesNode = this.core.db.gun.get(`token_room_${roomId}`).map();
+    const roomMessagesNode = this.core.db.gun.get(roomId).map();
 
-    roomMessagesNode.on(async (messageData: any, messageId: string) => {
-      await this.processIncomingTokenMessage(
-        messageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-    });
+    const handler = roomMessagesNode.on(
+      async (messageData: any, messageId: string) => {
+        await this.processIncomingTokenMessage(
+          messageData,
+          messageId,
+          token,
+          currentUserPair,
+          currentUserPub,
+          roomId
+        );
+      }
+    );
+    this.roomMessageHandlers.set(roomId, handler);
   }
 
   /**
@@ -451,6 +603,7 @@ export class TokenRoomManager {
 
     // Controllo duplicati per ID
     if (this.processedTokenMessageIds.has(messageId)) {
+      this.emitStatus({ type: "message:receive:duplicate", roomId, messageId });
       console.log(
         `[TokenRoomManager] 🔄 Duplicate token message ID detected: ${messageId.slice(0, 20)}...`
       );
@@ -468,6 +621,11 @@ export class TokenRoomManager {
       );
 
       if (!decryptedContent) {
+        this.emitStatus({
+          type: "message:receive:decryptFailed",
+          roomId,
+          messageId,
+        });
         console.error(
           `[TokenRoomManager] ❌ Could not decrypt message content`
         );
@@ -511,8 +669,15 @@ export class TokenRoomManager {
           `[TokenRoomManager] ⚠️ Nessun listener token room registrato per il messaggio`
         );
       }
+      this.emitStatus({ type: "message:receive:success", roomId, messageId });
     } catch (error) {
       this.processedTokenMessageIds.delete(messageId);
+      this.emitStatus({
+        type: "message:receive:error",
+        roomId,
+        messageId,
+        error: String(error),
+      });
       console.error(
         `[TokenRoomManager] ❌ Errore processamento messaggio token room:`,
         error
@@ -712,6 +877,16 @@ export class TokenRoomManager {
   }
 
   /**
+   * Subscribe to token room messages and get an unsubscribe function
+   */
+  public subscribeTokenRoomMessages(
+    callback: TokenRoomMessageListener
+  ): () => void {
+    this.onTokenRoomMessage(callback);
+    return () => this.removeTokenRoomMessageListener(callback);
+  }
+
+  /**
    * Gets the current listening status
    */
   public isListeningTokenRooms(): boolean {
@@ -737,5 +912,47 @@ export class TokenRoomManager {
    */
   public getActiveTokenRoomsCount(): number {
     return this.activeTokenRooms.size;
+  }
+
+  /** Returns ids of active token rooms */
+  public getActiveRooms(): string[] {
+    return Array.from(this.activeTokenRooms.keys());
+  }
+
+  /** Update token for a specific room (e.g., rotation) */
+  public updateTokenForRoom(roomId: string, token: string): void {
+    if (!roomId || !token) return;
+    this.activeTokenRooms.set(roomId, token);
+    this.emitStatus({ type: "room:token:update", roomId });
+  }
+
+  /** Leave a token room: stop per-room listener and forget token */
+  public leaveTokenRoom(roomId: string): void {
+    try {
+      const handler = this.roomMessageHandlers.get(roomId);
+      if (handler && typeof handler.off === "function") {
+        handler.off();
+      }
+    } catch {}
+    this.roomMessageHandlers.delete(roomId);
+    this.activeTokenRooms.delete(roomId);
+    this.emitStatus({ type: "room:leave:success", roomId });
+  }
+
+  /**
+   * Snapshot for UI/telemetry panels
+   */
+  public getUxSnapshot(): {
+    isListening: boolean;
+    activeRooms: number;
+    listeners: number;
+    processedMessages: number;
+  } {
+    return {
+      isListening: this._isListeningTokenRooms,
+      activeRooms: this.activeTokenRooms.size,
+      listeners: this.tokenRoomListeners.length,
+      processedMessages: this.processedTokenMessageIds.size,
+    };
   }
 }

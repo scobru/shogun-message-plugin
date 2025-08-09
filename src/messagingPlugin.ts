@@ -1,15 +1,14 @@
 // Plugin di messaggistica E2E corretto per GunDB
 import { ShogunCore, ShogunPlugin } from "shogun-core";
-import { MessageData, MessageListener } from "./types";
 import { MessageProcessor } from "./messageProcessor";
 import { EncryptionManager } from "./encryption";
-import { ChatManager } from "./chatManager";
 import { GroupManager } from "./groupManager";
 import { PublicRoomManager } from "./publicRoomManager";
 import { TokenRoomManager } from "./tokenRoomManager";
+import { sendToGunDB } from "./utils";
 
 /**
- * Messaging plugin for Shogun SDK
+ * Messaging plugin for Shogun SDK - Protocol layer only
  * Provides end-to-end encrypted messaging capabilities
  */
 export class MessagingPlugin implements ShogunPlugin {
@@ -19,19 +18,17 @@ export class MessagingPlugin implements ShogunPlugin {
   private core: ShogunCore;
   private encryptionManager: EncryptionManager;
   private messageProcessor: MessageProcessor;
-  private chatManager: ChatManager;
+  private groupManager: GroupManager;
   private publicRoomManager: PublicRoomManager;
   private tokenRoomManager: TokenRoomManager;
-  private groupManager: GroupManager;
 
   constructor() {
     this.core = null as any;
     this.encryptionManager = null as any;
     this.messageProcessor = null as any;
-    this.chatManager = null as any;
+    this.groupManager = null as any;
     this.publicRoomManager = null as any;
     this.tokenRoomManager = null as any;
-    this.groupManager = null as any;
   }
 
   /**
@@ -46,32 +43,113 @@ export class MessagingPlugin implements ShogunPlugin {
       this.encryptionManager
     );
     this.tokenRoomManager = new TokenRoomManager(core, this.encryptionManager);
-    this.chatManager = new ChatManager(
+    this.messageProcessor = new MessageProcessor(
       core,
-      this.tokenRoomManager,
-      this.encryptionManager
+      this.encryptionManager,
+      this.groupManager
     );
-    this.messageProcessor = new MessageProcessor(core, this.encryptionManager, this.groupManager);
 
-    this.groupManager.setChatManager(this.chatManager);
-    this.chatManager.setGroupManager(this.groupManager);
-    this.messageProcessor.setChatManager(this.chatManager);
-
-    console.log("[MessagingPlugin] ✅ Plugin initialized successfully");
+    console.log(
+      "[MessagingPlugin] ✅ Protocol layer initialized successfully - 4 send functions ready"
+    );
   }
 
+  // ============================================================================
+  // 🚀 CORE MESSAGING FUNCTIONS (4 essential send functions)
+  // ============================================================================
+
   /**
-   * Creates a new group chat
+   * Sends a private message to a recipient (1-to-1 encrypted)
    */
-  public async createGroup(
-    groupName: string,
-    memberPubs: string[]
-  ): Promise<{ success: boolean; groupData?: any; error?: string }> {
-    return this.groupManager.createGroup(groupName, memberPubs);
+  public async sendMessage(
+    recipientPub: string,
+    messageContent: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return {
+        success: false,
+        error: "Devi essere loggato per inviare un messaggio.",
+      };
+    }
+
+    if (!recipientPub || !messageContent) {
+      return {
+        success: false,
+        error: "Destinatario e messaggio sono obbligatori.",
+      };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return {
+          success: false,
+          error: "Coppia di chiavi utente non disponibile",
+        };
+      }
+
+      const senderPub = currentUserPair.pub;
+      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+
+      // Create the complete message
+      const messageData: any = {
+        from: senderPub,
+        content: messageContent,
+        timestamp: Date.now(),
+        id: messageId,
+      };
+
+      // Sign the message
+      messageData.signature = await this.core.db.sea.sign(
+        messageData.content,
+        currentUserPair
+      );
+
+      // Encrypt the entire message for the recipient
+      const recipientEpub =
+        await this.encryptionManager.getRecipientEpub(recipientPub);
+      const sharedSecret = await this.core.db.sea.secret(
+        recipientEpub,
+        currentUserPair
+      );
+      const encryptedMessage = await this.core.db.sea.encrypt(
+        messageData,
+        sharedSecret || ""
+      );
+
+      // Create the wrapper for GunDB
+      const encryptedMessageData = {
+        data: encryptedMessage,
+        from: senderPub,
+        timestamp: Date.now(),
+        id: messageId,
+      };
+
+      // Send to GunDB using shared helper so path matches listener expectations
+      await sendToGunDB(
+        this.core,
+        recipientPub,
+        messageId,
+        encryptedMessageData,
+        "private"
+      );
+
+      return { success: true, messageId };
+    } catch (error: any) {
+      console.error(
+        `[MessagingPlugin] ❌ Error sending private message:`,
+        error
+      );
+      return {
+        success: false,
+        error:
+          error.message || "Errore sconosciuto durante l'invio del messaggio",
+      };
+    }
   }
 
   /**
-   * Sends a message to a group
+   * Sends a message to a group (encrypted with group key)
    */
   public async sendGroupMessage(
     groupId: string,
@@ -81,27 +159,7 @@ export class MessagingPlugin implements ShogunPlugin {
   }
 
   /**
-   * Sends a private message to a recipient
-   */
-  public async sendMessage(
-    recipientPub: string,
-    messageContent: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    return this.chatManager.sendMessage(recipientPub, messageContent);
-  }
-
-  /**
-   * Sends a public message to a room
-   */
-  public async sendPublicMessage(
-    roomId: string,
-    messageContent: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    return this.publicRoomManager.sendPublicMessage(roomId, messageContent);
-  }
-
-  /**
-   * Sends a message to a token-protected room
+   * Sends a message to a token-protected room (encrypted with shared token)
    */
   public async sendTokenRoomMessage(
     roomId: string,
@@ -116,98 +174,77 @@ export class MessagingPlugin implements ShogunPlugin {
   }
 
   /**
-   * Joins a chat (private, public, or token room)
+   * Sends a public message to a room (unencrypted, signed)
    */
-  public async joinChat(
-    chatType: "private" | "public" | "token",
-    chatId: string,
-    token?: string
-  ): Promise<{ success: boolean; chatData?: any; error?: string }> {
-    return this.chatManager.joinChat(chatType, chatId, token);
+  public async sendPublicMessage(
+    roomId: string,
+    messageContent: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    return this.publicRoomManager.sendPublicMessage(roomId, messageContent);
+  }
+
+  // ============================================================================
+  // 🔧 PROTOCOL SUPPORT FUNCTIONS (needed for the 4 send functions to work)
+  // ============================================================================
+
+  /**
+   * Creates a new group chat (needed for sendGroupMessage)
+   */
+  public async createGroup(
+    groupName: string,
+    memberPubs: string[]
+  ): Promise<{ success: boolean; groupData?: any; error?: string }> {
+    return this.groupManager.createGroup(groupName, memberPubs);
   }
 
   /**
-   * Gets the user's chats
+   * Creates a new token room (needed for sendTokenRoomMessage)
    */
-  public async getMyChats(): Promise<{
-    success: boolean;
-    chats?: any[];
-    error?: string;
-  }> {
-    return this.chatManager.getMyChats();
+  public async createTokenRoom(
+    roomName: string,
+    description?: string,
+    maxParticipants?: number
+  ): Promise<{ success: boolean; roomData?: any; error?: string }> {
+    return this.tokenRoomManager.createTokenRoom(
+      roomName,
+      description,
+      maxParticipants
+    );
   }
 
   /**
-   * Generates an invite link for a chat
+   * Gets group data (needed for group operations)
    */
-  public generateInviteLink(
-    chatType: "private" | "public" | "token",
-    chatId: string,
-    chatName?: string
-  ): string {
-    return this.chatManager.generateInviteLink(chatType, chatId, chatName);
+  public async getGroupData(groupId: string): Promise<any | null> {
+    return this.groupManager.getGroupData(groupId);
   }
 
   /**
-   * Registers a callback for private messages
+   * Gets token room data (needed for token room operations)
    */
-  public onMessage(callback: MessageListener): void {
-    this.messageProcessor.onMessage(callback);
+  public async getTokenRoomData(roomId: string): Promise<any | null> {
+    return this.tokenRoomManager.getTokenRoomData(roomId);
   }
 
   /**
-   * Registers a callback for public messages
+   * Joins a token room (needed for sendTokenRoomMessage)
    */
-  public onPublicMessage(callback: MessageListener): void {
-    this.publicRoomManager.onPublicMessage(callback);
+  public async joinTokenRoom(
+    roomId: string,
+    token: string
+  ): Promise<{ success: boolean; roomData?: any; error?: string }> {
+    return this.tokenRoomManager.joinTokenRoom(roomId, token);
   }
 
   /**
-   * Registers a callback for token room messages
-   */
-  public onTokenRoomMessage(callback: MessageListener): void {
-    this.tokenRoomManager.onTokenRoomMessage(callback);
-  }
-
-  /**
-   * Starts listening to messages
-   */
-  public startListening(): void {
-    this.messageProcessor.startListening();
-  }
-
-  /**
-   * Stops listening to messages
-   */
-  public stopListening(): void {
-    this.messageProcessor.stopListening();
-  }
-
-  /**
-   * Gets the current listening status
-   */
-  public isListening(): boolean {
-    return this.messageProcessor.isListening();
-  }
-
-  /**
-   * Clears a conversation
-   */
-  public async clearConversation(
-    recipientPub: string
-  ): Promise<{ success: boolean; error?: string }> {
-    return this.messageProcessor.clearConversation(recipientPub);
-  }
-
-  /**
-   * Gets a recipient's epub
+   * Gets a recipient's epub (needed for private messaging)
    */
   public async getRecipientEpub(recipientPub: string): Promise<string> {
     return this.encryptionManager.getRecipientEpub(recipientPub);
   }
 
   /**
-   * Publishes the user's epub
+   * Publishes the user's epub (needed for others to message this user)
    */
   public async publishUserEpub(): Promise<{
     success: boolean;
@@ -226,7 +263,7 @@ export class MessagingPlugin implements ShogunPlugin {
   }
 
   /**
-   * Checks if a user's epub is available
+   * Checks if a user's epub is available (needed for messaging validation)
    */
   public async checkUserEpubAvailability(userPub: string): Promise<{
     available: boolean;
@@ -253,5 +290,107 @@ export class MessagingPlugin implements ShogunPlugin {
     }
     const currentUserPair = (this.core.db.user as any)._?.sea;
     return currentUserPair?.epub || null;
+  }
+
+  // ============================================================================
+  // 🎧 RAW PROTOCOL LISTENERS (for app to implement UI layer)
+  // ============================================================================
+
+  /**
+   * Registers a callback for raw private messages (protocol level)
+   */
+  public onRawMessage(callback: any): void {
+    this.messageProcessor.onMessage(callback);
+  }
+
+  /**
+   * Registers a callback for raw public messages (protocol level)
+   */
+  public onRawPublicMessage(callback: any): void {
+    this.publicRoomManager.onPublicMessage(callback);
+  }
+
+  /**
+   * Starts listening to a specific public room
+   */
+  public startListeningPublic(roomId: string): void {
+    this.publicRoomManager.startListeningPublic(roomId);
+  }
+
+  /**
+   * Stops listening to public rooms
+   */
+  public stopListeningPublic(): void {
+    this.publicRoomManager.stopListeningPublic();
+  }
+
+  /**
+   * Removes a specific public message listener callback
+   */
+  public removePublicMessageListener(callback: any): void {
+    this.publicRoomManager.removePublicMessageListener(callback);
+  }
+
+  /**
+   * Registers a callback for raw token room messages (protocol level)
+   */
+  public onRawTokenRoomMessage(callback: any): void {
+    this.tokenRoomManager.onTokenRoomMessage(callback);
+  }
+
+  /**
+   * Starts listening to token room messages for the current user
+   */
+  public startListeningTokenRooms(): void {
+    this.tokenRoomManager.startListeningTokenRooms();
+  }
+
+  /**
+   * Stops listening to token room messages
+   */
+  public stopListeningTokenRooms(): void {
+    this.tokenRoomManager.stopListeningTokenRooms();
+  }
+
+  /**
+   * Registers a callback for raw group messages (protocol level)
+   */
+  public onRawGroupMessage(callback: any): void {
+    this.messageProcessor.onGroupMessage(callback);
+  }
+
+  /**
+   * Adds a realtime listener for a specific group's messages (protocol level)
+   */
+  public addGroupListener(groupId: string): void {
+    this.messageProcessor.addGroupListener(groupId);
+  }
+
+  /**
+   * Removes the realtime listener for a specific group's messages (protocol level)
+   */
+  public removeGroupListener(groupId: string): void {
+    this.messageProcessor.removeGroupListener(groupId);
+  }
+
+  /**
+   * Starts the protocol message listeners
+   */
+  public startProtocolListeners(): void {
+    this.messageProcessor.startListening();
+  }
+
+  /**
+   * Stops the protocol message listeners
+   */
+  public stopProtocolListeners(): void {
+    this.messageProcessor.stopListening();
+  }
+
+  /**
+   * Checks if protocol listeners are active
+   */
+  public areProtocolListenersActive(): boolean {
+    return this.messageProcessor.isListening();
   }
 }

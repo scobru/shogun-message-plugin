@@ -1,5 +1,5 @@
 import { ShogunCore } from "shogun-core";
-import { MessageData, MessageListener } from "./types";
+import { MessageData, MessageListener, GroupMessageListener } from "./types";
 import { createSafePath, cleanupExpiredEntries, limitMapSize } from "./utils";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
@@ -25,16 +25,14 @@ export class MessageProcessor {
   private readonly MESSAGE_TTL = 24 * 60 * 60 * 1000; // 24 ore
   private clearedConversations = new Set<string>();
 
-  private chatManager!: ChatManager;
-
-  constructor(core: ShogunCore, encryptionManager: EncryptionManager, groupManager: GroupManager) {
+  constructor(
+    core: ShogunCore,
+    encryptionManager: EncryptionManager,
+    groupManager: GroupManager
+  ) {
     this.core = core;
     this.encryptionManager = encryptionManager;
     this.groupManager = groupManager;
-  }
-
-  public setChatManager(chatManager: ChatManager) {
-    this.chatManager = chatManager;
   }
 
   /**
@@ -70,21 +68,49 @@ export class MessageProcessor {
       }
     );
 
-    // Start listening for group messages
-    const myChats = await this.chatManager.getMyChats();
-    if (myChats.success && myChats.chats) {
-        for (const chat of myChats.chats) {
-            if (chat.type === 'group') {
-                const groupId = chat.id;
-                const groupMessagePath = `group-messages/${groupId}`;
-                const groupNode = this.core.db.gun.get(groupMessagePath).map();
-                const listener = groupNode.on(async (messageData: any, messageId: string) => {
-                    await this.processIncomingGroupMessage(messageData, messageId, currentUserPair);
-                });
-                this.groupMessageListeners.set(groupId, listener);
-            }
-        }
+    // NOTE: Group message listeners are now managed at the app layer via addGroupListener
+  }
+
+  /**
+   * Adds a realtime listener for a specific group's messages
+   */
+  public addGroupListener(groupId: string): void {
+    if (!groupId || this.groupMessageListeners.has(groupId)) return;
+
+    const currentUserPair = (this.core.db.user as any)?._?.sea;
+    if (!currentUserPair) {
+      console.warn(
+        `[MessageProcessor] Cannot add group listener without user keypair`
+      );
+      return;
     }
+
+    const groupMessagePath = `group-messages/${groupId}`;
+    const groupNode = this.core.db.gun.get(groupMessagePath).map();
+    const listener = groupNode.on(
+      async (messageData: any, messageId: string) => {
+        await this.processIncomingGroupMessage(
+          messageData,
+          messageId,
+          currentUserPair
+        );
+      }
+    );
+
+    this.groupMessageListeners.set(groupId, listener);
+  }
+
+  /**
+   * Removes the realtime listener for a specific group's messages
+   */
+  public removeGroupListener(groupId: string): void {
+    const listener = this.groupMessageListeners.get(groupId);
+    if (listener && typeof listener.off === "function") {
+      try {
+        listener.off();
+      } catch {}
+    }
+    this.groupMessageListeners.delete(groupId);
   }
 
   /**
@@ -99,9 +125,9 @@ export class MessageProcessor {
       this.privateMessageListener = null;
     }
 
-    // Stop all group message listeners
+    // Stop all group message listeners (if any were added elsewhere)
     for (const [groupId, listener] of this.groupMessageListeners.entries()) {
-        listener.off();
+      listener.off();
     }
     this.groupMessageListeners.clear();
 
@@ -115,57 +141,78 @@ export class MessageProcessor {
     currentUserPair: any
   ): Promise<void> {
     try {
-        const message = JSON.parse(messageData);
-        const { from, content, timestamp, groupId, signature } = message;
-        const currentUserPub = currentUserPair.pub;
+      const message = JSON.parse(messageData);
+      const { from, content, timestamp, groupId, signature } = message;
+      const currentUserPub = currentUserPair.pub;
 
-        if (!from || from === currentUserPub || !groupId) {
-            return;
-        }
+      // Do not ignore messages from the current user; UI needs them to replace temp messages
+      if (!from || !groupId) {
+        return;
+      }
 
-        if (this.processedMessageIds.has(messageId)) {
-            return;
-        }
-        this.processedMessageIds.set(messageId, Date.now());
+      if (this.processedMessageIds.has(messageId)) {
+        return;
+      }
+      this.processedMessageIds.set(messageId, Date.now());
 
-        const groupData = await this.groupManager.getGroupData(groupId);
-        if (!groupData || !groupData.members.includes(currentUserPub)) {
-            this.processedMessageIds.delete(messageId);
-            return;
-        }
-
-        const isValid = await this.encryptionManager.verifyMessageSignature(content, signature, from);
-        if (!isValid) {
-            this.processedMessageIds.delete(messageId);
-            return;
-        }
-
-        const encryptedGroupKey = groupData.encryptedKeys[currentUserPub];
-        const creatorEpub = await this.encryptionManager.getRecipientEpub(groupData.createdBy);
-        const sharedSecret = await this.core.db.sea.secret(creatorEpub, currentUserPair);
-        const groupKey = await this.core.db.sea.decrypt(encryptedGroupKey, sharedSecret);
-
-        if (!groupKey) {
-            this.processedMessageIds.delete(messageId);
-            return;
-        }
-
-        const decryptedContent = await this.core.db.sea.decrypt(content, groupKey);
-
-        const decryptedMessage: MessageData = {
-            id: messageId,
-            from,
-            content: decryptedContent,
-            timestamp,
-            groupId,
-            signature,
-        };
-
-        this.messageListeners.forEach(callback => callback(decryptedMessage));
-        this.groupMessageListenersInternal.forEach(callback => callback(decryptedMessage as any));
-
-    } catch (error) {
+      const groupData = await this.groupManager.getGroupData(groupId);
+      if (!groupData || !groupData.members.includes(currentUserPub)) {
         this.processedMessageIds.delete(messageId);
+        return;
+      }
+
+      const isValid = await this.encryptionManager.verifyMessageSignature(
+        content,
+        signature,
+        from
+      );
+      if (!isValid) {
+        this.processedMessageIds.delete(messageId);
+        return;
+      }
+
+      const encryptedGroupKey = groupData.encryptedKeys[currentUserPub];
+      const creatorEpub = await this.encryptionManager.getRecipientEpub(
+        groupData.createdBy
+      );
+      const sharedSecret = await this.core.db.sea.secret(
+        creatorEpub,
+        currentUserPair
+      );
+      if (!sharedSecret) {
+        this.processedMessageIds.delete(messageId);
+        return;
+      }
+      const groupKey = await this.core.db.sea.decrypt(
+        encryptedGroupKey,
+        sharedSecret
+      );
+
+      if (!groupKey) {
+        this.processedMessageIds.delete(messageId);
+        return;
+      }
+
+      const decryptedContent = await this.core.db.sea.decrypt(
+        content,
+        groupKey
+      );
+
+      const decryptedMessage: MessageData = {
+        id: messageId,
+        from,
+        content: decryptedContent,
+        timestamp,
+        groupId,
+        signature,
+      };
+
+      this.messageListeners.forEach((callback) => callback(decryptedMessage));
+      this.groupMessageListenersInternal.forEach((callback) =>
+        callback(decryptedMessage as any)
+      );
+    } catch (error) {
+      this.processedMessageIds.delete(messageId);
     }
   }
 
@@ -431,16 +478,5 @@ export class MessageProcessor {
    */
   public getClearedConversationsCount(): number {
     return this.clearedConversations.size;
-  }
-
-  /**
-   * Clears processed message IDs for a specific group (useful when rejoining)
-   */
-  public clearProcessedGroupMessageIds(groupId?: string): void {
-    // This functionality is no longer needed as GroupManager is removed.
-    // Keeping the method signature for now, but it will do nothing.
-    console.warn(
-      `[MessageProcessor] clearProcessedGroupMessageIds is deprecated as GroupManager is removed.`
-    );
   }
 }
