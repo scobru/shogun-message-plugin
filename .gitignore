@@ -27,3 +27,6 @@ dist-ssr
 .env
 
 .vercel
+
+web-bundles
+docs

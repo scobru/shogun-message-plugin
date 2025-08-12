@@ -1,5 +1,6 @@
 // Plugin di messaggistica E2E corretto per GunDB
 import { ShogunCore } from "shogun-core";
+import { BasePlugin } from "./base";
 import { MessageProcessor } from "./messageProcessor";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
@@ -11,9 +12,12 @@ import { sendToGunDB } from "./utils";
  * Messaging plugin for Shogun SDK - Protocol layer only
  * Provides end-to-end encrypted messaging capabilities
  */
-export class MessagingPlugin {
+export class MessagingPlugin extends BasePlugin {
   public readonly name = "messaging";
-  public readonly version = "1.0.0";
+  public readonly version: string = "4.7.0";
+  public readonly description =
+    "End-to-end encrypted messaging plugin for Shogun SDK";
+  public readonly _category = "messaging";
 
   private core: ShogunCore;
   private encryptionManager: EncryptionManager;
@@ -22,7 +26,23 @@ export class MessagingPlugin {
   private publicRoomManager: PublicRoomManager;
   private tokenRoomManager: TokenRoomManager;
 
+  // Getter for testing purposes
+  public get groupManagerForTesting(): GroupManager {
+    return this.groupManager;
+  }
+
+  // Getter for testing purposes
+  public get encryptionManagerForTesting(): EncryptionManager {
+    return this.encryptionManager;
+  }
+
+  // Getter for testing purposes
+  public get tokenRoomManagerForTesting(): TokenRoomManager {
+    return this.tokenRoomManager;
+  }
+
   constructor() {
+    super();
     this.core = null as any;
     this.encryptionManager = null as any;
     this.messageProcessor = null as any;
@@ -35,6 +55,7 @@ export class MessagingPlugin {
    * Initializes the plugin with the Shogun core
    */
   public initialize(core: ShogunCore): void {
+    super.initialize(core);
     this.core = core;
     this.encryptionManager = new EncryptionManager(core);
     this.groupManager = new GroupManager(core, this.encryptionManager);
@@ -89,7 +110,14 @@ export class MessagingPlugin {
       }
 
       const senderPub = currentUserPair.pub;
-      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      const messageId = (() => {
+        const bytes = new Uint8Array(8);
+        (globalThis as any)?.crypto?.getRandomValues?.(bytes);
+        const rand = Array.from(bytes, (b) =>
+          b.toString(16).padStart(2, "0")
+        ).join("");
+        return `msg_${Date.now()}_${rand}`;
+      })();
 
       // Create the complete message
       const messageData: any = {
@@ -100,14 +128,30 @@ export class MessagingPlugin {
       };
 
       // **FIX: Sign a canonical representation of the message data**
-      const dataToSign = JSON.stringify({
-        content: messageData.content,
-        timestamp: messageData.timestamp,
-        id: messageData.id,
-      });
+      const dataToSign = JSON.stringify(
+        {
+          content: messageData.content,
+          timestamp: messageData.timestamp,
+          id: messageData.id,
+        },
+        Object.keys({ content: "", timestamp: 0, id: "" }).sort()
+      );
+
+      console.log(
+        `[MessagingPlugin] 🔍 Creating signature for message ${messageId}:`
+      );
+      console.log(`[MessagingPlugin] 📝 Data to sign: ${dataToSign}`);
+      console.log(
+        `[MessagingPlugin] 👤 Sender pub: ${senderPub.slice(0, 8)}...`
+      );
+
       messageData.signature = await this.core.db.sea.sign(
         dataToSign,
         currentUserPair
+      );
+
+      console.log(
+        `[MessagingPlugin] 🔑 Created signature: ${messageData.signature.slice(0, 20)}...`
       );
 
       // Encrypt the entire message for the recipient
@@ -186,6 +230,114 @@ export class MessagingPlugin {
     messageContent: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     return this.publicRoomManager.sendPublicMessage(roomId, messageContent);
+  }
+
+  // ============================================================================
+  // 🔄 COMPATIBILITY SHIMS (legacy app API)
+  // ============================================================================
+
+  /**
+   * Legacy alias: start listening to private messages
+   */
+  public startListening(): void {
+    try {
+      this.messageProcessor.startListening();
+    } catch {}
+  }
+
+  /**
+   * Legacy alias: stop listening
+   */
+  public stopListening(): void {
+    try {
+      this.messageProcessor.stopListening();
+    } catch {}
+  }
+
+  /**
+   * Legacy alias: subscribe to decrypted private messages
+   */
+  public onMessage(callback: any): void {
+    try {
+      this.messageProcessor.onMessage(callback);
+    } catch {}
+  }
+
+  /**
+   * Legacy API used by Invite flows to join chats
+   */
+  public async joinChat(
+    chatType: "private" | "public" | "group" | "token",
+    chatId: string
+  ): Promise<{ success: boolean; chatData?: any; error?: string }> {
+    try {
+      if (!chatType || !chatId) {
+        return { success: false, error: "Invalid chat type or id" };
+      }
+
+      if (chatType === "public") {
+        // Start listening to the public room and expose minimal chat data
+        this.publicRoomManager.startListeningPublic(chatId);
+        return {
+          success: true,
+          chatData: { type: "public", id: chatId, name: chatId },
+        };
+      }
+
+      if (chatType === "group") {
+        // Ensure a listener is attached and return current metadata
+        this.messageProcessor.addGroupListener(chatId);
+        const groupData = await this.groupManager.getGroupData(chatId);
+        return {
+          success: !!groupData,
+          chatData: groupData || { type: "group", id: chatId, name: chatId },
+          error: groupData ? undefined : "Group not found",
+        };
+      }
+
+      if (chatType === "private") {
+        // Nothing to join at protocol level; mark as available
+        return { success: true, chatData: { type: "private", id: chatId } };
+      }
+
+      if (chatType === "token") {
+        // Join token room and return room data
+        const result = await this.tokenRoomManager.joinTokenRoom(chatId, arguments[2] || "");
+        return {
+          success: result.success,
+          chatData: result.roomData,
+          error: result.error,
+        };
+      }
+
+      return { success: false, error: "Unsupported chat type for joinChat" };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  }
+
+  /**
+   * Minimal runtime stats for panels
+   */
+  public getStats(): {
+    isListening: boolean;
+    messageListenersCount: number;
+    processedMessagesCount: number;
+    hasActiveListener: boolean;
+  } {
+    const isListening = this.messageProcessor?.isListening?.() || false;
+    const messageListenersCount =
+      this.messageProcessor?.getMessageListenersCount?.() || 0;
+    const processedMessagesCount =
+      this.messageProcessor?.getProcessedMessagesCount?.() || 0;
+    const hasActiveListener =
+      this.areProtocolListenersActive?.() || isListening;
+    return {
+      isListening,
+      messageListenersCount,
+      processedMessagesCount,
+      hasActiveListener,
+    };
   }
 
   // ============================================================================
@@ -397,5 +549,23 @@ export class MessagingPlugin {
    */
   public areProtocolListenersActive(): boolean {
     return this.messageProcessor.isListening();
+  }
+
+  /**
+   * Debug method to check listener status
+   */
+  public getListenerStatus(): {
+    isListening: boolean;
+    messageListenersCount: number;
+    processedMessagesCount: number;
+    clearedConversationsCount: number;
+  } {
+    return {
+      isListening: this.messageProcessor.isListening(),
+      messageListenersCount: this.messageProcessor.getMessageListenersCount(),
+      processedMessagesCount: this.messageProcessor.getProcessedMessagesCount(),
+      clearedConversationsCount:
+        this.messageProcessor.getClearedConversationsCount(),
+    };
   }
 }

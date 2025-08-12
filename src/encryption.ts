@@ -256,8 +256,40 @@ export class EncryptionManager {
     senderPub: string
   ): Promise<boolean> {
     try {
-      const isValid = await this.core.db.sea.verify(signature, senderPub);
-      return !!isValid;
+      console.log(`[EncryptionManager] 🔍 Verifying signature:`);
+      console.log(`[EncryptionManager] 📝 Expected content: ${content}`);
+      console.log(`[EncryptionManager] 🔑 Signature: ${signature.slice(0, 20)}...`);
+      console.log(`[EncryptionManager] 👤 Sender pub: ${senderPub.slice(0, 8)}...`);
+      
+      // SEA.verify returns the original data if signature is valid, otherwise falsy
+      const recovered = await this.core.db.sea.verify(signature, senderPub);
+      
+      console.log(`[EncryptionManager] 🔄 Recovered data:`, recovered);
+      console.log(`[EncryptionManager] 📊 Recovered type: ${typeof recovered}`);
+
+      // Compare against the expected content. Keep strict equality on strings,
+      // and fallback to JSON comparison if recovered is an object.
+      if (typeof recovered === "string") {
+        const isValid = recovered === content;
+        console.log(`[EncryptionManager] ✅ String comparison result: ${isValid}`);
+        return isValid;
+      }
+
+      if (recovered && typeof recovered === "object") {
+        try {
+          const recoveredJson = JSON.stringify(recovered);
+          const isValid = recoveredJson === content;
+          console.log(`[EncryptionManager] 📄 Recovered JSON: ${recoveredJson}`);
+          console.log(`[EncryptionManager] ✅ JSON comparison result: ${isValid}`);
+          return isValid;
+        } catch (error) {
+          console.error(`[EncryptionManager] ❌ JSON comparison error:`, error);
+          return false;
+        }
+      }
+
+      console.log(`[EncryptionManager] ❌ No valid recovered data`);
+      return false;
     } catch (error) {
       console.error(`[EncryptionManager] ❌ Errore verifica firma:`, error);
       return false;

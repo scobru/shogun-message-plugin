@@ -5,11 +5,28 @@ import { ShogunCore } from "shogun-core";
  */
 
 /**
- * Generates a unique message ID
+ * Generates cryptographically-strong random hex string of given byte length
+ */
+function randomHex(byteLength: number = 8): string {
+  const array = new Uint8Array(byteLength);
+  // Use Web Crypto API when available (Node 20+ and browsers)
+  if ((globalThis as any)?.crypto?.getRandomValues) {
+    (globalThis as any).crypto.getRandomValues(array);
+  } else {
+    // Very rare fallback: fill with time-based values to avoid crashing
+    for (let i = 0; i < array.length; i++) {
+      array[i] = (Date.now() + i) & 0xff;
+    }
+  }
+  return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Generates a unique message ID (timestamp + secure random hex)
  */
 export function generateMessageId(): string {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 15);
+  const random = randomHex(8);
   return `msg_${timestamp}_${random}`;
 }
 
@@ -18,7 +35,7 @@ export function generateMessageId(): string {
  */
 export function generateGroupId(): string {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 15);
+  const random = randomHex(8);
   return `${timestamp}_${random}`;
 }
 
@@ -94,9 +111,14 @@ export function generateInviteLink(
   chatType: "private" | "public" | "group" | "token",
   chatId: string,
   chatName?: string,
-  token?: string
+  token?: string,
+  baseUrlOverride?: string
 ): string {
-  const baseUrl = window.location.origin;
+  const baseUrl =
+    baseUrlOverride ||
+    (typeof window !== "undefined" && (window as any)?.location?.origin
+      ? (window as any).location.origin
+      : "");
   const encodedType = encodeURIComponent(chatType);
   const encodedId = encodeURIComponent(chatId);
   const encodedName = chatName ? encodeURIComponent(chatName) : "";
@@ -132,7 +154,7 @@ export function generateSecureToken(): string {
  */
 export function generateTokenRoomId(): string {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 15);
+  const random = randomHex(8);
   return `tr_${timestamp}_${random}`;
 }
 

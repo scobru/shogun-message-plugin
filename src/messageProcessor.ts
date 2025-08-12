@@ -156,46 +156,57 @@ export class MessageProcessor {
       this.processedMessageIds.set(messageId, Date.now());
 
       const groupData = await this.groupManager.getGroupData(groupId);
-      if (!groupData || !groupData.members.includes(currentUserPub)) {
+      if (!groupData) {
+        console.warn(
+          `[MessageProcessor] ⚠️ Group data not found for ${groupId}`
+        );
         this.processedMessageIds.delete(messageId);
         return;
       }
 
-      const encryptedGroupKey = groupData.encryptedKeys[currentUserPub];
-      const creatorEpub = await this.encryptionManager.getRecipientEpub(
-        groupData.createdBy
-      );
-      const sharedSecret = await this.core.db.sea.secret(
-        creatorEpub,
+      // Use the improved group key retrieval method
+      const groupKey = await this.groupManager.getGroupKeyForUser(
+        groupData,
+        currentUserPub,
         currentUserPair
-      );
-      if (!sharedSecret) {
-        this.processedMessageIds.delete(messageId);
-        return;
-      }
-      const groupKey = await this.core.db.sea.decrypt(
-        encryptedGroupKey,
-        sharedSecret
       );
 
       if (!groupKey) {
+        console.warn(
+          `[MessageProcessor] ⚠️ No group key found for user ${currentUserPub} in group ${groupId}`
+        );
         this.processedMessageIds.delete(messageId);
         return;
       }
 
+      // Decrypt the message content using the group key
       const decryptedContent = await this.core.db.sea.decrypt(
         content,
         groupKey
       );
 
+      // Ensure decrypted content is a string
+      let finalDecryptedContent: string;
+      if (typeof decryptedContent === "object" && decryptedContent !== null) {
+        if (typeof decryptedContent.content === "string") {
+          finalDecryptedContent = decryptedContent.content;
+        } else {
+          finalDecryptedContent = JSON.stringify(decryptedContent);
+        }
+      } else {
+        finalDecryptedContent = String(decryptedContent);
+      }
+
       // **FIX: Verify signature against the DECRYPTED content**
       const isValid = await this.encryptionManager.verifyMessageSignature(
-        decryptedContent,
+        finalDecryptedContent,
         signature,
         from
       );
       if (!isValid) {
-        console.warn(`[MessageProcessor] ⚠️ Invalid signature for group message ${messageId}`);
+        console.warn(
+          `[MessageProcessor] ⚠️ Invalid signature for group message ${messageId}`
+        );
         this.processedMessageIds.delete(messageId);
         return;
       }
@@ -203,7 +214,7 @@ export class MessageProcessor {
       const decryptedMessage: MessageData = {
         id: messageId,
         from,
-        content: decryptedContent,
+        content: finalDecryptedContent,
         timestamp,
         groupId,
         signature,
@@ -265,11 +276,26 @@ export class MessageProcessor {
       // **FIX: Verify the signature on the decrypted message**
       if (decryptedMessage.signature) {
         // **FIX: Verify signature against the same canonical representation**
-        const dataToVerify = JSON.stringify({
-          content: decryptedMessage.content,
-          timestamp: decryptedMessage.timestamp,
-          id: decryptedMessage.id,
-        });
+        const dataToVerify = JSON.stringify(
+          {
+            content: decryptedMessage.content,
+            timestamp: decryptedMessage.timestamp,
+            id: decryptedMessage.id,
+          },
+          Object.keys({ content: "", timestamp: 0, id: "" }).sort()
+        );
+
+        console.log(
+          `[MessageProcessor] 🔍 Verifying signature for message ${messageId}:`
+        );
+        console.log(`[MessageProcessor] 📝 Data to verify: ${dataToVerify}`);
+        console.log(
+          `[MessageProcessor] 🔑 Signature: ${decryptedMessage.signature.slice(0, 20)}...`
+        );
+        console.log(
+          `[MessageProcessor] 👤 From: ${decryptedMessage.from.slice(0, 8)}...`
+        );
+
         const isValid = await this.encryptionManager.verifyMessageSignature(
           dataToVerify,
           decryptedMessage.signature,
@@ -282,6 +308,10 @@ export class MessageProcessor {
           );
           this.processedMessageIds.delete(messageId);
           return;
+        } else {
+          console.log(
+            `[MessageProcessor] ✅ Signature verified successfully for message ${messageId}`
+          );
         }
       } else {
         // This case can be removed once all clients are updated
@@ -293,7 +323,7 @@ export class MessageProcessor {
       // Check if this conversation has been cleared AFTER decryption
       if (this.isConversationCleared(decryptedMessage.from, currentUserPub)) {
         console.log(
-          `[MessageProcessor] ⏭️ Ignoring message from cleared conversation: ${decryptedMessage.from.slice(0, 8)}...`
+          `[MessageProcessor] ⏭️ Ignoring message from cleared conversation: ${decryptedMessage.from.slice(0, 8)}... (cleared conversations: ${this.clearedConversations.size})`
         );
         this.processedMessageIds.delete(messageId);
         return;
@@ -301,11 +331,20 @@ export class MessageProcessor {
 
       // Notifica i listener
       if (this.messageListeners.length > 0) {
-        this.messageListeners.forEach((callback) => {
+        console.log(
+          `[MessageProcessor] 📢 Notifying ${this.messageListeners.length} listeners`
+        );
+        this.messageListeners.forEach((callback, index) => {
           try {
             callback(decryptedMessage);
+            console.log(
+              `[MessageProcessor] ✅ Listener ${index + 1} notified successfully`
+            );
           } catch (error) {
-            console.error(`[MessageProcessor] ❌ Errore listener:`, error);
+            console.error(
+              `[MessageProcessor] ❌ Errore listener ${index + 1}:`,
+              error
+            );
           }
         });
       } else {
@@ -478,8 +517,11 @@ export class MessageProcessor {
    * Resets the cleared conversations tracking
    */
   public resetClearedConversations(): void {
+    const previousCount = this.clearedConversations.size;
     this.clearedConversations.clear();
-    console.log(`[MessageProcessor] 🔄 Reset cleared conversations tracking`);
+    console.log(
+      `[MessageProcessor] 🔄 Reset cleared conversations tracking - ${previousCount} → ${this.clearedConversations.size} conversations`
+    );
   }
 
   /**

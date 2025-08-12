@@ -2,6 +2,8 @@
 
 A comprehensive end-to-end encrypted messaging plugin for the Shogun protocol, built on GunDB. This plugin provides private encrypted messaging, public room messaging, group messaging, and token-based encrypted rooms.
 
+> ⚠️ Protocol Only: Questo plugin ora espone solo il livello di protocollo (cifratura, firma, routing GunDB, listener raw). La logica UI (joinChat, getMyChats, generateInviteLink, hook React, formattazioni) vive nell'app che integra il plugin. Consulta `./PROTOCOL_ONLY.md` e `../docs/messaging-protocol-only.md` per i dettagli aggiornati e l'uso consigliato.
+
 ## Features
 
 - **End-to-End Encryption**: Secure private messaging using GunDB's SEA encryption

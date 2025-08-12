@@ -69,7 +69,6 @@ export interface TokenRoomMessage {
   id: string;
   roomId: string;
   username?: string;
-  encryptedContent: string; // Content encrypted with shared token
   signature?: string; // Digital signature for authenticity
 }
 
@@ -91,7 +90,6 @@ export interface GroupMessage {
   id: string;
   groupId: string;
   username?: string;
-  encryptedContent: string; // Contenuto cifrato con encryption key
   signature?: string; // Firma digitale del messaggio
 }
 

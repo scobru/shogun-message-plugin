@@ -59,9 +59,17 @@ export class GroupManager {
     }
 
     const allMemberPubs = Array.from(new Set([creatorPub, ...memberPubs]));
+    console.log(
+      "[GroupManager] 📋 Creating group with members:",
+      allMemberPubs
+    );
+
     // Store members as a Gun-friendly map instead of a raw array
     const membersMap: { [pub: string]: boolean } = {};
-    for (const pub of allMemberPubs) membersMap[pub] = true;
+    for (const pub of allMemberPubs) {
+      membersMap[pub] = true;
+      console.log(`[GroupManager] ✅ Added member to map: ${pub}`);
+    }
     const encryptedKeys: { [pub: string]: string } = {};
     const failedMembers: string[] = [];
 
@@ -102,7 +110,15 @@ export class GroupManager {
       };
     }
 
-    const groupId = `group_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    const groupId = `group_${Date.now()}_${Array.from(
+      new Uint8Array(8).map((_, i) => i)
+    )
+      .map(() => {
+        const a = new Uint8Array(1);
+        (globalThis as any)?.crypto?.getRandomValues?.(a);
+        return a[0].toString(16).padStart(2, "0");
+      })
+      .join("")}`;
     const groupData: GroupData = {
       id: groupId,
       name: groupName,
@@ -206,157 +222,23 @@ export class GroupManager {
       return { success: false, error: "Gruppo non trovato." };
     }
 
-    // Normalize key strings to handle variations in pub formatting (e.g., with/without suffix)
-    const normalize = (k?: string) =>
-      typeof k === "string" ? k.split(".")[0] : "";
-    const senderPubNorm = normalize(senderPub);
-    let membersNorm = (groupData.members || []).map(normalize);
-    const createdByNorm = normalize(groupData.createdBy);
-
-    let encryptedKeyEntries = Object.entries(groupData.encryptedKeys || {});
-    let hasKeyForSender = encryptedKeyEntries.some(
-      ([k]) => normalize(k) === senderPubNorm || k === senderPub
-    );
-
-    // If key not yet visible (eventual consistency), retry briefly
-    if (!hasKeyForSender) {
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        const fresh = await this.getGroupData(groupId);
-        if (!fresh) break;
-        groupData = fresh;
-        membersNorm = (groupData.members || []).map(normalize);
-        encryptedKeyEntries = Object.entries(groupData.encryptedKeys || {});
-        hasKeyForSender = encryptedKeyEntries.some(
-          ([k]) => normalize(k) === senderPubNorm || k === senderPub
-        );
-        if (hasKeyForSender) break;
-      }
-    }
-
-    const isMember =
-      hasKeyForSender ||
-      createdByNorm === senderPubNorm ||
-      groupData.members.includes(senderPub) ||
-      membersNorm.includes(senderPubNorm);
-
+    // **FIX: Improved membership verification**
+    const isMember = await this.verifyGroupMembership(groupData, senderPub);
     if (!isMember) {
       return { success: false, error: "Non sei membro di questo gruppo." };
     }
 
     try {
-      // Decrypt the group key
-      let encryptedGroupKey: string | undefined =
-        groupData.encryptedKeys[senderPub];
-      if (!encryptedGroupKey) {
-        // Fallback to normalized key match
-        const found = encryptedKeyEntries.find(
-          ([k]) => normalize(k) === senderPubNorm
-        );
-        if (found) encryptedGroupKey = found[1];
-      }
-
-      // If still not present (due to shallow reads), try direct path traversal using dotted pub
-      if (!encryptedGroupKey) {
-        try {
-          const segments = senderPub.split(".");
-          let node = this.core.db.gun.get(groupId).get("encryptedKeys");
-          for (const seg of segments) {
-            node = node.get(seg);
-          }
-          encryptedGroupKey = await new Promise<string | undefined>(
-            (resolve) => {
-              node.once((val: any) => {
-                resolve(typeof val === "string" ? val : undefined);
-              });
-              setTimeout(() => resolve(undefined), 500);
-            }
-          );
-        } catch {}
-      }
-
-      // Self-heal: if sender is the creator and own key is missing, try to recover group key
-      if (!encryptedGroupKey && createdByNorm === senderPubNorm) {
-        for (const [memberPub, encKey] of encryptedKeyEntries) {
-          const memberPubNorm = normalize(memberPub);
-          if (!encKey || memberPubNorm === senderPubNorm) continue;
-          try {
-            // Derive shared secret with this member to decrypt the group key
-            const memberEpub =
-              await this.encryptionManager.getRecipientEpub(memberPub);
-            const sharedWithMember = await this.core.db.sea.secret(
-              memberEpub,
-              currentUserPair
-            );
-            if (!sharedWithMember) continue;
-            const recoveredGroupKey = await this.core.db.sea.decrypt(
-              encKey,
-              sharedWithMember
-            );
-            if (!recoveredGroupKey) continue;
-
-            // Re-encrypt group key for the creator and persist
-            const creatorEpub =
-              await this.encryptionManager.getRecipientEpub(senderPub);
-            const sharedForSelf = await this.core.db.sea.secret(
-              creatorEpub,
-              currentUserPair
-            );
-            if (!sharedForSelf) break;
-            const selfEncKey = await this.core.db.sea.encrypt(
-              recoveredGroupKey,
-              sharedForSelf
-            );
-            if (typeof selfEncKey === "string") {
-              // Persist under encryptedKeys[senderPub]
-              await new Promise<void>((resolve, reject) => {
-                this.core.db.gun
-                  .get(groupId)
-                  .get("encryptedKeys")
-                  .get(senderPub)
-                  .put(selfEncKey, (ack: any) => {
-                    if (ack && ack.err) reject(new Error(ack.err));
-                    else resolve();
-                  });
-              });
-              // Update local view and continue
-              groupData.encryptedKeys[senderPub] = selfEncKey;
-              encryptedGroupKey = selfEncKey;
-            }
-            break;
-          } catch {}
-        }
-      }
-      if (!encryptedGroupKey) {
-        return {
-          success: false,
-          error: "Impossibile trovare la chiave di gruppo per l'utente.",
-        };
-      }
-
-      // We need to find the creator's epub to derive the secret to decrypt the key
-      const creatorEpub = await this.encryptionManager.getRecipientEpub(
-        groupData.createdBy
-      );
-      const sharedSecret = await this.core.db.sea.secret(
-        creatorEpub,
+      // **FIX: Improved group key retrieval**
+      const groupKey = await this.getGroupKeyForUser(
+        groupData,
+        senderPub,
         currentUserPair
       );
-      if (!sharedSecret) {
-        return {
-          success: false,
-          error: "Impossibile generare la chiave condivisa.",
-        };
-      }
-      const groupKey = await this.core.db.sea.decrypt(
-        encryptedGroupKey,
-        sharedSecret
-      );
-
       if (!groupKey) {
         return {
           success: false,
-          error: "Impossibile decifrare la chiave del gruppo.",
+          error: "Impossibile ottenere la chiave del gruppo per l'utente.",
         };
       }
 
@@ -372,7 +254,15 @@ export class GroupManager {
         groupKey
       );
 
-      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+      const messageId = `msg_${Date.now()}_${Array.from(
+        new Uint8Array(8).map((_, i) => i)
+      )
+        .map(() => {
+          const a = new Uint8Array(1);
+          (globalThis as any)?.crypto?.getRandomValues?.(a);
+          return a[0].toString(16).padStart(2, "0");
+        })
+        .join("")}`;
       const message = {
         id: messageId,
         from: senderPub,
@@ -417,55 +307,69 @@ export class GroupManager {
       });
 
       if (data) {
-        // Helper to flatten nested objects into dot-joined keys
-        const flatten = (
-          obj: any,
-          prefix = "",
-          out: Record<string, any> = {}
-        ) => {
-          if (!obj || typeof obj !== "object") return out;
-          for (const [k, v] of Object.entries(obj)) {
-            if (k === "_" || k === "#") continue; // skip gun internals
-            const fullKey = prefix ? `${prefix}.${k}` : k;
-            if (v && typeof v === "object" && !Array.isArray(v)) {
-              flatten(v, fullKey, out);
-            } else {
-              out[fullKey] = v;
-            }
-          }
-          return out;
-        };
+        console.log(`[GroupManager] 🔍 Raw group data for ${groupId}:`, data);
 
-        // Normalize members: handle array, flat map, or nested map with dots
         let normalizedMembers: string[] = [];
-        if (Array.isArray(data.members)) {
-          normalizedMembers = data.members as string[];
-        } else if (data.members && typeof data.members === "object") {
-          const flatMembers = flatten(data.members);
-          normalizedMembers = Object.entries(flatMembers)
-            .filter(([, val]) => !!val)
-            .map(([key]) => key);
-        }
-
-        // Normalize encryptedKeys: handle nested maps where pub keys may be split by dots
-        let normalizedEncryptedKeys: Record<string, string> = {};
-        if (data.encryptedKeys && typeof data.encryptedKeys === "object") {
-          const flatKeys = flatten(data.encryptedKeys);
-          for (const [k, v] of Object.entries(flatKeys)) {
-            if (typeof v === "string") {
-              normalizedEncryptedKeys[k] = v;
+        // Explicitly fetch members by mapping over the 'members' node
+        const membersNode = this.core.db.gun.get(groupId).get("members");
+        await new Promise<void>((resolve) => {
+          let collectedMembers: string[] = [];
+          membersNode.map().once((value: any, key: string) => {
+            if (value === true) {
+              // Assuming members are stored as { pubkey: true }
+              collectedMembers.push(key);
             }
-          }
-        }
+          });
+          // Add a timeout to ensure collection even if map is slow or empty
+          setTimeout(() => {
+            normalizedMembers = Array.from(new Set(collectedMembers)); // Remove duplicates
+            resolve();
+          }, 1000); // Wait up to 1 second for members to be collected
+        });
+        console.log(
+          "[GroupManager] 📋 Members from Gun.map():",
+          normalizedMembers
+        );
+
+        let normalizedEncryptedKeys: Record<string, string> = {};
+        // Explicitly fetch encrypted keys by mapping over the 'encryptedKeys' node
+        const encryptedKeysNode = this.core.db.gun
+          .get(groupId)
+          .get("encryptedKeys");
+        await new Promise<void>((resolve) => {
+          let collectedKeys: Record<string, string> = {};
+          encryptedKeysNode.map().once((value: any, key: string) => {
+            if (typeof value === "string") {
+              collectedKeys[key] = value;
+            }
+          });
+          // Add a timeout to ensure collection
+          setTimeout(() => {
+            normalizedEncryptedKeys = collectedKeys;
+            resolve();
+          }, 1000); // Wait up to 1 second for keys to be collected
+        });
+        console.log(
+          "[GroupManager] 📋 Encrypted keys from Gun.map():",
+          Object.keys(normalizedEncryptedKeys)
+        );
 
         const groupData: GroupData = {
           id: data.id,
           name: data.name,
-          members: normalizedMembers,
+          members: normalizedMembers, // Use the explicitly fetched members
           createdBy: data.createdBy,
           createdAt: data.createdAt,
-          encryptedKeys: normalizedEncryptedKeys,
+          encryptedKeys: normalizedEncryptedKeys, // Use the explicitly fetched keys
         };
+        console.log(`[GroupManager] ✅ Normalized group data for ${groupId}:`, {
+          id: groupData.id,
+          name: groupData.name,
+          memberCount: groupData.members.length,
+          members: groupData.members,
+          encryptedKeyCount: Object.keys(groupData.encryptedKeys).length,
+          encryptedKeys: Object.keys(groupData.encryptedKeys),
+        });
         return groupData;
       }
       return null;
@@ -476,5 +380,216 @@ export class GroupManager {
       );
       return null;
     }
+  }
+
+  /**
+   * **NEW: Improved group membership verification**
+   */
+  private async verifyGroupMembership(
+    groupData: GroupData,
+    userPub: string
+  ): Promise<boolean> {
+    const normalize = (k?: string) =>
+      typeof k === "string" ? k.split(".")[0] : "";
+    const userPubNorm = normalize(userPub);
+    const createdByNorm = normalize(groupData.createdBy);
+
+    // Check if user is the creator
+    if (createdByNorm === userPubNorm || groupData.createdBy === userPub) {
+      return true;
+    }
+
+    // Check if user has an encrypted key (authoritative membership check)
+    const encryptedKeys = groupData.encryptedKeys || {};
+    const hasEncryptedKey = Object.keys(encryptedKeys).some((k) => {
+      const kn = normalize(k);
+      return kn === userPubNorm || k === userPub;
+    });
+    if (hasEncryptedKey) {
+      return true;
+    }
+
+    // Check members array as fallback
+    const members = Array.isArray(groupData.members) ? groupData.members : [];
+    return members.some((member) => {
+      const memberNorm = normalize(member);
+      return memberNorm === userPubNorm || member === userPub;
+    });
+  }
+
+  /**
+   * **NEW: Improved group key retrieval with retries and fallbacks**
+   */
+  public async getGroupKeyForUser(
+    groupData: GroupData,
+    userPub: string,
+    currentUserPair: any
+  ): Promise<string | undefined> {
+    const normalize = (k?: string) =>
+      typeof k === "string" ? k.split(".")[0] : "";
+    const userPubNorm = normalize(userPub);
+    const createdByNorm = normalize(groupData.createdBy);
+
+    console.log(
+      `[GroupManager] 🔑 Getting group key for user ${userPub} (normalized: ${userPubNorm})`
+    );
+    console.log(
+      `[GroupManager] 📋 Available encrypted keys:`,
+      Object.keys(groupData.encryptedKeys || {})
+    );
+
+    // Try to get encrypted key for user
+    let encryptedGroupKey: string | undefined =
+      groupData.encryptedKeys[userPub];
+    if (!encryptedGroupKey) {
+      // Fallback to normalized key match
+      const encryptedKeyEntries = Object.entries(groupData.encryptedKeys || {});
+      const found = encryptedKeyEntries.find(
+        ([k]) => normalize(k) === userPubNorm
+      );
+      if (found) encryptedGroupKey = found[1];
+    }
+
+    // If still not present, try direct path traversal
+    if (!encryptedGroupKey) {
+      try {
+        const segments = userPub.split(".");
+        let node = this.core.db.gun.get(groupData.id).get("encryptedKeys");
+        for (const seg of segments) {
+          node = node.get(seg);
+        }
+        encryptedGroupKey = await new Promise<string | undefined>((resolve) => {
+          node.once((val: any) => {
+            resolve(typeof val === "string" ? val : undefined);
+          });
+          setTimeout(() => resolve(undefined), 1000);
+        });
+      } catch {}
+    }
+
+    // Self-heal: if user is creator and own key is missing, try to recover
+    if (!encryptedGroupKey && createdByNorm === userPubNorm) {
+      console.log(
+        "[GroupManager] ⚠️ Creator's key missing, attempting recovery..."
+      );
+      encryptedGroupKey = await this.recoverCreatorGroupKey(
+        groupData,
+        currentUserPair
+      );
+      if (encryptedGroupKey) {
+        console.log("[GroupManager] ✅ Creator's key recovered.");
+        // Attempt to persist the recovered key back to GunDB for future use
+        try {
+          await new Promise<void>((resolve, reject) => {
+            this.core.db.gun
+              .get(groupData.id)
+              .get("encryptedKeys")
+              .get(userPub)
+              .put(encryptedGroupKey, (ack: any) => {
+                if (ack.err) reject(new Error(ack.err));
+                else resolve();
+              });
+          });
+          console.log(
+            "[GroupManager] 💾 Recovered creator key persisted to GunDB."
+          );
+        } catch (e) {
+          console.warn(
+            "[GroupManager] ⚠️ Failed to persist recovered creator key:",
+            e
+          );
+        }
+      }
+    }
+
+    if (!encryptedGroupKey) {
+      return undefined;
+    }
+
+    // Decrypt the group key
+    const creatorEpub = await this.encryptionManager.getRecipientEpub(
+      groupData.createdBy
+    );
+    const sharedSecret = await this.core.db.sea.secret(
+      creatorEpub,
+      currentUserPair
+    );
+    if (!sharedSecret) {
+      return undefined;
+    }
+
+    const groupKey = await this.core.db.sea.decrypt(
+      encryptedGroupKey,
+      sharedSecret
+    );
+
+    return groupKey || undefined;
+  }
+
+  /**
+   * **NEW: Recover group key for creator if missing**
+   */
+  private async recoverCreatorGroupKey(
+    groupData: GroupData,
+    currentUserPair: any
+  ): Promise<string | undefined> {
+    const normalize = (k?: string) =>
+      typeof k === "string" ? k.split(".")[0] : "";
+    const creatorPubNorm = normalize(groupData.createdBy);
+
+    // Try to recover from other members' encrypted keys
+    for (const [memberPub, encKey] of Object.entries(
+      groupData.encryptedKeys || {}
+    )) {
+      const memberPubNorm = normalize(memberPub);
+      if (!encKey || memberPubNorm === creatorPubNorm) continue;
+
+      try {
+        // Derive shared secret with this member to decrypt the group key
+        const memberEpub =
+          await this.encryptionManager.getRecipientEpub(memberPub);
+        const sharedWithMember = await this.core.db.sea.secret(
+          memberEpub,
+          currentUserPair
+        );
+        if (!sharedWithMember) continue;
+
+        const recoveredGroupKey = await this.core.db.sea.decrypt(
+          encKey,
+          sharedWithMember
+        );
+        if (!recoveredGroupKey) continue;
+
+        // Re-encrypt group key for the creator and persist
+        const creatorEpub = await this.encryptionManager.getRecipientEpub(
+          groupData.createdBy
+        );
+        const sharedForSelf = await this.core.db.sea.secret(
+          creatorEpub,
+          currentUserPair
+        );
+        if (!sharedForSelf) continue;
+
+        const selfEncKey = await this.core.db.sea.encrypt(
+          recoveredGroupKey,
+          sharedForSelf
+        );
+        if (typeof selfEncKey === "string") {
+          // Persist under encryptedKeys[creatorPub]
+          await new Promise<void>((resolve, reject) => {
+            this.core.db.gun
+              .get(groupData.id)
+              .get("encryptedKeys")
+              .get(groupData.createdBy)
+              .put(selfEncKey, (ack: any) => {
+                if (ack && ack.err) reject(new Error(ack.err));
+                else resolve();
+              });
+          });
+          return selfEncKey;
+        }
+      } catch {}
+    }
+    return undefined;
   }
 }
