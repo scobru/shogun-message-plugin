@@ -223,7 +223,7 @@ describe("PublicRoomManager", () => {
       expect(calledMessage.roomId).toBe("general");
     });
 
-    test("should ignore messages from current user", async () => {
+    test("should process messages from current user (no longer filtered)", async () => {
       const messageData = {
         from: "user_pub_key_123", // Current user
         content: "Hello everyone!",
@@ -245,7 +245,7 @@ describe("PublicRoomManager", () => {
         roomId
       );
 
-      expect(mockCallback).not.toHaveBeenCalled();
+      expect(mockCallback).toHaveBeenCalledWith(messageData);
     });
 
     test("should ignore duplicate messages", async () => {

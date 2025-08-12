@@ -86,7 +86,24 @@ export class PublicRoomManager {
       };
 
       // Usa il metodo condiviso per inviare a GunDB
+      // Debug logging (commented out to avoid test issues)
+      // console.log("🔍 PublicRoomManager: Sending to GunDB", {
+      //   roomId,
+      //   messageId,
+      //   path: `room_${roomId}`,
+      //   messageData: {
+      //     from: signedMessage.from,
+      //     content: signedMessage.content.substring(0, 20) + "...",
+      //     timestamp: signedMessage.timestamp,
+      //   },
+      // });
+
       await this.sendToGunDB(roomId, messageId, signedMessage, "public");
+
+      // console.log("✅ PublicRoomManager: Message sent to GunDB successfully", {
+      //   messageId,
+      //   roomId,
+      // });
 
       return { success: true, messageId };
     } catch (error: any) {
@@ -123,8 +140,27 @@ export class PublicRoomManager {
     // Listener per messaggi pubblici
     const roomNode = this.core.db.gun.get(`room_${roomId}`).map();
 
+    // Debug logging (commented out to avoid test issues)
+    // console.log("🔍 PublicRoomManager: Setting up listener for room", {
+    //   roomId,
+    //   path: `room_${roomId}`,
+    //   currentUserPub: currentUserPub.substring(0, 10) + "..."
+    // });
+
     this.publicMessageListener = roomNode.on(
       async (messageData: any, messageId: string) => {
+        // Debug logging (commented out to avoid test issues)
+        // console.log("🔍 PublicRoomManager: Raw message received", {
+        //   messageId,
+        //   hasMessageData: !!messageData,
+        //   messageData: messageData ? {
+        //     from: messageData.from?.substring(0, 10) + "...",
+        //     content: messageData.content?.substring(0, 20) + "...",
+        //     roomId: messageData.roomId,
+        //     timestamp: messageData.timestamp
+        //   } : null
+        // });
+
         await this.processIncomingPublicMessage(
           messageData,
           messageId,
@@ -169,14 +205,35 @@ export class PublicRoomManager {
     currentUserPub: string,
     roomId: string
   ): Promise<void> {
-    // Validazione base
+    console.log("🔍 PublicRoomManager: Processing incoming message", {
+      messageId,
+      hasContent: !!messageData?.content,
+      hasFrom: !!messageData?.from,
+      hasRoomId: !!messageData?.roomId,
+      messageRoomId: messageData?.roomId,
+      expectedRoomId: roomId,
+      messageFrom: messageData?.from?.substring(0, 10) + "...",
+      currentUserPub: currentUserPub.substring(0, 10) + "...",
+      isFromSelf: messageData?.from === currentUserPub,
+      roomIdMatch: messageData?.roomId === roomId,
+    });
+
+    // Validazione base (rimuoviamo il filtro per i messaggi propri)
     if (
       !messageData?.content ||
       !messageData?.from ||
       !messageData?.roomId ||
-      messageData.roomId !== roomId ||
-      messageData.from === currentUserPub
+      messageData.roomId !== roomId
+      // messageData.from === currentUserPub  // Rimuoviamo questo filtro
     ) {
+      // Debug logging (commented out to avoid test issues)
+      // console.log("❌ PublicRoomManager: Message filtered out", {
+      //   reason: !messageData?.content ? "no content" :
+      //           !messageData?.from ? "no from" :
+      //           !messageData?.roomId ? "no roomId" :
+      //           messageData.roomId !== roomId ? "roomId mismatch" :
+      //           messageData.from === currentUserPub ? "from self" : "unknown"
+      // });
       return;
     }
 
@@ -273,14 +330,31 @@ export class PublicRoomManager {
 
     return new Promise<void>((resolve, reject) => {
       try {
+        // Debug logging (commented out to avoid test issues)
+        // console.log("🔍 PublicRoomManager: GunDB put operation", {
+        //   safePath,
+        //   messageId,
+        //   hasMessageData: !!messageData,
+        // });
+
         messageNode.get(messageId).put(messageData, (ack: any) => {
+          // Debug logging (commented out to avoid test issues)
+          // console.log("🔍 PublicRoomManager: GunDB put callback", {
+          //   ack,
+          //   hasError: !!ack.err,
+          //   error: ack.err,
+          // });
+
           if (ack.err) {
+            console.error("❌ PublicRoomManager: GunDB put error", ack.err);
             reject(new Error(ack.err));
           } else {
+            // console.log("✅ PublicRoomManager: GunDB put success");
             resolve();
           }
         });
       } catch (error) {
+        console.error("❌ PublicRoomManager: GunDB put exception", error);
         reject(error);
       }
     });
