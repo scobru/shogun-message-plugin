@@ -216,6 +216,7 @@ describe("GroupManager", () => {
     test("should fail when user is not a member", async () => {
       const nonMemberGroupData = {
         ...mockGroupData,
+        createdBy: "other_creator_pub_key", // Change creator to someone else
         members: ["other_member_1", "other_member_2"],
         encryptedKeys: {
           "other_member_1": "encrypted_key_1",

@@ -88,14 +88,8 @@ export class PublicRoomManager {
       // Usa il metodo condiviso per inviare a GunDB
       await this.sendToGunDB(roomId, messageId, signedMessage, "public");
 
-      console.log(`[PublicRoomManager] ✅ Public message sent successfully`);
-
       return { success: true, messageId };
     } catch (error: any) {
-      console.error(
-        `[PublicRoomManager] ❌ Errore invio messaggio pubblico:`,
-        error
-      );
       return {
         success: false,
         error:
@@ -112,25 +106,19 @@ export class PublicRoomManager {
     if (
       !this.core.isLoggedIn() ||
       this._isListeningPublic ||
-      !this.core.db.user
+      !this.core.db.user ||
+      !roomId
     ) {
       return;
     }
 
     const currentUserPair = (this.core.db.user as any)._?.sea;
     if (!currentUserPair) {
-      console.error(
-        `[PublicRoomManager] Coppia di chiavi utente non disponibile`
-      );
       return;
     }
 
     this._isListeningPublic = true;
     const currentUserPub = currentUserPair.pub;
-
-    console.log(
-      `[PublicRoomManager] 🔊 Starting public room listener for: ${roomId}`
-    );
 
     // Listener per messaggi pubblici
     const roomNode = this.core.db.gun.get(`room_${roomId}`).map();
@@ -154,7 +142,6 @@ export class PublicRoomManager {
     const index = this.publicMessageListeners.indexOf(callback);
     if (index > -1) {
       this.publicMessageListeners.splice(index, 1);
-      console.log(`[PublicRoomManager] 🗑️ Removed public message listener`);
     }
   }
 
@@ -171,7 +158,6 @@ export class PublicRoomManager {
 
     this._isListeningPublic = false;
     this.processedPublicMessageIds.clear();
-    console.log(`[PublicRoomManager] 🔇 Stopped public room listener`);
   }
 
   /**
@@ -188,16 +174,14 @@ export class PublicRoomManager {
       !messageData?.content ||
       !messageData?.from ||
       !messageData?.roomId ||
-      messageData.roomId !== roomId
+      messageData.roomId !== roomId ||
+      messageData.from === currentUserPub
     ) {
       return;
     }
 
     // Controllo duplicati per ID
     if (this.processedPublicMessageIds.has(messageId)) {
-      console.log(
-        `[PublicRoomManager] 🔄 Duplicate public message ID detected: ${messageId.slice(0, 20)}...`
-      );
       return;
     }
 
@@ -213,9 +197,8 @@ export class PublicRoomManager {
           messageData.from
         );
         if (!isValid) {
-          console.warn(
-            `[PublicRoomManager] ⚠️ Invalid signature for public message from: ${messageData.from.slice(0, 8)}...`
-          );
+          this.processedPublicMessageIds.delete(messageId);
+          return;
         }
       }
 
@@ -225,23 +208,12 @@ export class PublicRoomManager {
           try {
             callback(messageData as PublicMessage);
           } catch (error) {
-            console.error(
-              `[PublicRoomManager] ❌ Errore listener pubblico:`,
-              error
-            );
+            // Silent error handling
           }
         });
-      } else {
-        console.warn(
-          `[PublicRoomManager] ⚠️ Nessun listener pubblico registrato per il messaggio`
-        );
       }
     } catch (error) {
       this.processedPublicMessageIds.delete(messageId);
-      console.error(
-        `[PublicRoomManager] ❌ Errore processamento messaggio pubblico:`,
-        error
-      );
     }
   }
 
@@ -299,31 +271,16 @@ export class PublicRoomManager {
 
     const messageNode = this.core.db.gun.get(safePath);
 
-    console.log(
-      `[PublicRoomManager] 📡 Sending ${type} message to GunDB path: ${safePath}`
-    );
-
     return new Promise<void>((resolve, reject) => {
       try {
         messageNode.get(messageId).put(messageData, (ack: any) => {
           if (ack.err) {
-            console.error(
-              `[PublicRoomManager] ❌ Errore invio messaggio ${type}:`,
-              ack.err
-            );
             reject(new Error(ack.err));
           } else {
-            console.log(
-              `[PublicRoomManager] ✅ ${type} message sent successfully to GunDB`
-            );
             resolve();
           }
         });
       } catch (error) {
-        console.error(
-          `[PublicRoomManager] ❌ Errore durante put operation ${type}:`,
-          error
-        );
         reject(error);
       }
     });

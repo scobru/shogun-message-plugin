@@ -28,8 +28,30 @@ function makeCoreMock() {
   const gun = {
     get: jest.fn(() => ({ 
       map: jest.fn(() => ({
-        on: jest.fn(() => ({ off: jest.fn() }))
-      }))
+        on: jest.fn(() => ({ off: jest.fn() })),
+        once: jest.fn((callback: any) => {
+          // Simulate some messages for clearConversation test
+          callback({ from: "user_pub_key_123", to: "recipient_pub_key" }, "msg_1");
+          callback({ from: "recipient_pub_key", to: "user_pub_key_123" }, "msg_2");
+        })
+      })),
+      get: jest.fn(() => ({
+        put: jest.fn((data: any, callback?: any) => {
+          if (callback && typeof callback === 'function') {
+            callback({}); // Success callback for nested put
+          }
+        })
+      })),
+      put: jest.fn((data: any, callback?: any) => {
+        if (callback && typeof callback === 'function') {
+          callback({}); // Success callback
+        }
+        return { get: jest.fn(() => ({ put: jest.fn((data: any, callback?: any) => {
+          if (callback && typeof callback === 'function') {
+            callback({}); // Success callback for nested put
+          }
+        }) })) };
+      })
     })),
     user: jest.fn(() => ({ 
       get: jest.fn(() => ({ 
@@ -230,7 +252,7 @@ describe("MessageProcessor", () => {
       expect(mockCore.db.sea.decrypt).toHaveBeenCalled();
     });
 
-    test("should ignore messages from current user", async () => {
+    test("should process messages from current user", async () => {
       const messageData = JSON.stringify({
         from: "user_pub_key_123", // Current user
         content: "encrypted_content",
@@ -250,7 +272,8 @@ describe("MessageProcessor", () => {
         currentUserPair
       );
 
-      expect(mockCallback).not.toHaveBeenCalled();
+      // Messages from current user should be processed (UI needs them to replace temp messages)
+      expect(mockCallback).toHaveBeenCalled();
     });
 
     test("should ignore duplicate messages", async () => {
@@ -429,6 +452,7 @@ describe("MessageProcessor", () => {
       const result = await messageProcessor.clearConversation(recipientPub);
 
       expect(result.success).toBe(true);
+      expect(result.clearedCount).toBeGreaterThan(0);
     });
 
     test("should fail when user is not logged in", async () => {

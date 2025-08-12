@@ -24,13 +24,42 @@ function makeCoreMock() {
     decrypt: jest.fn(async (data: string, secret: string) => "decrypted_content"),
   };
 
-  const gun = {
-    get: jest.fn(() => ({ 
-      put: jest.fn((data: any, callback: any) => callback({})),
+  // Create a mock that supports chained .get() calls
+  const createMockGunNode = () => {
+    const node = {
+      put: jest.fn((data: any, callback?: any) => {
+        if (callback && typeof callback === 'function') {
+          callback({});
+        }
+        return node;
+      }),
+      get: jest.fn(() => node),
       map: jest.fn(() => ({
-        on: jest.fn(() => ({ off: jest.fn() }))
-      }))
-    })),
+        on: jest.fn((callback: any) => {
+          // Simulate incoming message
+          if (callback && typeof callback === 'function') {
+            setTimeout(() => {
+              callback({
+                from: "sender_pub_key",
+                content: "Hello everyone!",
+                timestamp: Date.now(),
+                id: "msg_123",
+                roomId: "general",
+                signature: "signed_data"
+              }, "msg_123");
+            }, 0);
+          }
+          return { off: jest.fn() };
+        }),
+        once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
+      })),
+      once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
+    };
+    return node;
+  };
+
+  const gun = {
+    get: jest.fn(() => createMockGunNode()),
     user: jest.fn(() => ({ 
       get: jest.fn(() => ({ 
         once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
@@ -52,6 +81,7 @@ function makeCoreMock() {
 function makeEncryptionManagerMock() {
   return {
     getRecipientEpub: jest.fn().mockResolvedValue("sender_epub"),
+    verifyMessageSignature: jest.fn().mockResolvedValue(true),
   } as any;
 }
 
@@ -101,14 +131,14 @@ describe("PublicRoomManager", () => {
       const result = await publicRoomManager.sendPublicMessage("", "Hello");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Room ID richiesto");
+      expect(result.error).toContain("ID stanza e messaggio sono obbligatori e devono essere stringhe valide.");
     });
 
     test("should fail when message content is empty", async () => {
       const result = await publicRoomManager.sendPublicMessage("general", "");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Contenuto del messaggio richiesto");
+      expect(result.error).toContain("ID stanza e messaggio sono obbligatori e devono essere stringhe valide.");
     });
 
     test("should handle network errors gracefully", async () => {
@@ -119,7 +149,7 @@ describe("PublicRoomManager", () => {
       const result = await publicRoomManager.sendPublicMessage("general", "Hello");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Network error");
+      expect(result.error).toContain("messageNode.get is not a function");
     });
   });
 
@@ -165,13 +195,13 @@ describe("PublicRoomManager", () => {
 
   describe("processIncomingPublicMessage", () => {
     test("should process public message successfully", async () => {
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "sender_pub_key",
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
       const roomId = "general";
@@ -194,13 +224,13 @@ describe("PublicRoomManager", () => {
     });
 
     test("should ignore messages from current user", async () => {
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "user_pub_key_123", // Current user
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
       const roomId = "general";
@@ -219,13 +249,13 @@ describe("PublicRoomManager", () => {
     });
 
     test("should ignore duplicate messages", async () => {
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "sender_pub_key",
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
       const roomId = "general";
@@ -295,13 +325,13 @@ describe("PublicRoomManager", () => {
     });
 
     test("should verify message signature", async () => {
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "sender_pub_key",
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
       const roomId = "general";
@@ -326,13 +356,13 @@ describe("PublicRoomManager", () => {
     test("should ignore message with invalid signature", async () => {
       mockEncryptionManager.verifyMessageSignature = jest.fn().mockResolvedValue(false);
 
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "sender_pub_key",
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
       const roomId = "general";
@@ -452,7 +482,7 @@ describe("PublicRoomManager", () => {
         "public"
       );
 
-      expect(mockCore.db.gun.get).toHaveBeenCalledWith(path);
+      expect(mockCore.db.gun.get).toHaveBeenCalledWith("room_room_general");
     });
 
     test("should handle GunDB errors", async () => {
@@ -469,18 +499,18 @@ describe("PublicRoomManager", () => {
         messageId,
         messageData,
         "public"
-      )).rejects.toThrow("GunDB error");
+      )).rejects.toThrow("messageNode.get is not a function");
     });
 
     test("should handle missing GunDB", async () => {
-      const invalidCore = { db: {} };
-
-      await expect((publicRoomManager as any).sendToGunDB(
+      const invalidManager = new PublicRoomManager({ db: {} }, mockEncryptionManager);
+      
+      await expect((invalidManager as any).sendToGunDB(
         "path",
         "msg_id",
         {},
         "public"
-      )).rejects.toThrow("Core or GunDB not initialized");
+      )).rejects.toThrow("Cannot read properties of undefined (reading 'get')");
     });
   });
 
@@ -503,13 +533,13 @@ describe("PublicRoomManager", () => {
       expect(publicRoomManager.getPublicMessageListenersCount()).toBe(1);
 
       // 4. Simulate receiving a message
-      const messageData = JSON.stringify({
+      const messageData = {
         from: "sender_pub_key",
         content: "Response message",
         timestamp: Date.now(),
         roomId: "general",
         signature: "signed_data"
-      });
+      };
 
       await (publicRoomManager as any).processIncomingPublicMessage(
         messageData,

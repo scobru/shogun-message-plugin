@@ -45,9 +45,6 @@ export class MessageProcessor {
 
     const currentUserPair = (this.core.db.user as any)._?.sea;
     if (!currentUserPair) {
-      console.error(
-        `[MessageProcessor] Coppia di chiavi utente non disponibile`
-      );
       return;
     }
 
@@ -79,9 +76,6 @@ export class MessageProcessor {
 
     const currentUserPair = (this.core.db.user as any)?._?.sea;
     if (!currentUserPair) {
-      console.warn(
-        `[MessageProcessor] Cannot add group listener without user keypair`
-      );
       return;
     }
 
@@ -157,9 +151,6 @@ export class MessageProcessor {
 
       const groupData = await this.groupManager.getGroupData(groupId);
       if (!groupData) {
-        console.warn(
-          `[MessageProcessor] ⚠️ Group data not found for ${groupId}`
-        );
         this.processedMessageIds.delete(messageId);
         return;
       }
@@ -172,9 +163,6 @@ export class MessageProcessor {
       );
 
       if (!groupKey) {
-        console.warn(
-          `[MessageProcessor] ⚠️ No group key found for user ${currentUserPub} in group ${groupId}`
-        );
         this.processedMessageIds.delete(messageId);
         return;
       }
@@ -204,9 +192,6 @@ export class MessageProcessor {
         from
       );
       if (!isValid) {
-        console.warn(
-          `[MessageProcessor] ⚠️ Invalid signature for group message ${messageId}`
-        );
         this.processedMessageIds.delete(messageId);
         return;
       }
@@ -256,9 +241,6 @@ export class MessageProcessor {
 
     // Controllo duplicati per ID
     if (this.processedMessageIds.has(messageId)) {
-      console.log(
-        `[MessageProcessor] 🔄 Duplicate message ID detected: ${messageId.slice(0, 20)}...`
-      );
       return;
     }
 
@@ -285,17 +267,6 @@ export class MessageProcessor {
           Object.keys({ content: "", timestamp: 0, id: "" }).sort()
         );
 
-        console.log(
-          `[MessageProcessor] 🔍 Verifying signature for message ${messageId}:`
-        );
-        console.log(`[MessageProcessor] 📝 Data to verify: ${dataToVerify}`);
-        console.log(
-          `[MessageProcessor] 🔑 Signature: ${decryptedMessage.signature.slice(0, 20)}...`
-        );
-        console.log(
-          `[MessageProcessor] 👤 From: ${decryptedMessage.from.slice(0, 8)}...`
-        );
-
         const isValid = await this.encryptionManager.verifyMessageSignature(
           dataToVerify,
           decryptedMessage.signature,
@@ -303,54 +274,26 @@ export class MessageProcessor {
         );
 
         if (!isValid) {
-          console.warn(
-            `[MessageProcessor] ⚠️ Invalid signature for private message ${messageId}`
-          );
           this.processedMessageIds.delete(messageId);
           return;
-        } else {
-          console.log(
-            `[MessageProcessor] ✅ Signature verified successfully for message ${messageId}`
-          );
         }
-      } else {
-        // This case can be removed once all clients are updated
-        console.warn(
-          `[MessageProcessor] ⚠️ Message ${messageId} without signature, skipping verification for compatibility.`
-        );
       }
 
       // Check if this conversation has been cleared AFTER decryption
       if (this.isConversationCleared(decryptedMessage.from, currentUserPub)) {
-        console.log(
-          `[MessageProcessor] ⏭️ Ignoring message from cleared conversation: ${decryptedMessage.from.slice(0, 8)}... (cleared conversations: ${this.clearedConversations.size})`
-        );
         this.processedMessageIds.delete(messageId);
         return;
       }
 
       // Notifica i listener
       if (this.messageListeners.length > 0) {
-        console.log(
-          `[MessageProcessor] 📢 Notifying ${this.messageListeners.length} listeners`
-        );
         this.messageListeners.forEach((callback, index) => {
           try {
             callback(decryptedMessage);
-            console.log(
-              `[MessageProcessor] ✅ Listener ${index + 1} notified successfully`
-            );
           } catch (error) {
-            console.error(
-              `[MessageProcessor] ❌ Errore listener ${index + 1}:`,
-              error
-            );
+            // Silent error handling
           }
         });
-      } else {
-        console.warn(
-          `[MessageProcessor] ⚠️ Nessun listener registrato per il messaggio`
-        );
       }
     } catch (error) {
       this.processedMessageIds.delete(messageId);
@@ -378,11 +321,11 @@ export class MessageProcessor {
   }
 
   /**
-   * Clears all messages for a specific conversation
+   * Clears all messages in a conversation with a specific recipient
    */
   public async clearConversation(
     recipientPub: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{ success: boolean; error?: string; clearedCount?: number }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
@@ -417,77 +360,40 @@ export class MessageProcessor {
       // Mark this conversation as cleared
       this.clearedConversations.add(conversationId);
 
-      // Clear messages from both sender and recipient paths
-      const senderSafePath = createSafePath(currentUserPub);
+      let totalClearedCount = 0;
+
+      // **FIX: Clear messages from the correct paths**
+      // Messages sent TO the recipient are stored under recipient's path
       const recipientSafePath = createSafePath(recipientPub);
+      const recipientClearedCount = await this.clearMessagesFromPath(
+        recipientSafePath,
+        currentUserPub,
+        recipientPub,
+        "recipient"
+      );
+      totalClearedCount += recipientClearedCount;
 
-      // Clear messages from sender's path (messages sent by current user)
-      await new Promise<void>((resolve, reject) => {
-        try {
-          const senderNode = this.core.db.gun.get(senderSafePath);
-          senderNode.map().once((messageData: any, messageId: string) => {
-            if (
-              messageData &&
-              messageData.from === currentUserPub &&
-              messageData.to === recipientPub
-            ) {
-              senderNode.get(messageId).put(null, (ack: any) => {
-                if (ack.err) {
-                  console.error(
-                    `[MessageProcessor] ❌ Errore pulizia messaggio inviato:`,
-                    ack.err
-                  );
-                }
-              });
-            }
-          });
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      // Clear messages from recipient's path (messages received by current user)
-      await new Promise<void>((resolve, reject) => {
-        try {
-          const recipientNode = this.core.db.gun.get(recipientSafePath);
-          recipientNode.map().once((messageData: any, messageId: string) => {
-            if (
-              messageData &&
-              messageData.from === recipientPub &&
-              messageData.to === currentUserPub
-            ) {
-              recipientNode.get(messageId).put(null, (ack: any) => {
-                if (ack.err) {
-                  console.error(
-                    `[MessageProcessor] ❌ Errore pulizia messaggio ricevuto:`,
-                    ack.err
-                  );
-                }
-              });
-            }
-          });
-          resolve();
-        } catch (error) {
-          reject(error);
-        }
-      });
+      // Messages received FROM the recipient are stored under current user's path
+      const currentUserSafePath = createSafePath(currentUserPub);
+      const currentUserClearedCount = await this.clearMessagesFromPath(
+        currentUserSafePath,
+        recipientPub,
+        currentUserPub,
+        "sender"
+      );
+      totalClearedCount += currentUserClearedCount;
 
       // Clear processed message IDs for this conversation
+      const processedCount = this.processedMessageIds.size;
       for (const [messageId] of this.processedMessageIds.entries()) {
         this.processedMessageIds.delete(messageId);
       }
 
-      console.log(
-        `[MessageProcessor] ✅ Conversazione pulita per: ${recipientPub.slice(0, 8)}...`
-      );
-
-      return { success: true };
+      return {
+        success: true,
+        clearedCount: totalClearedCount,
+      };
     } catch (error: any) {
-      console.error(
-        `[MessageProcessor] ❌ Errore pulizia conversazione:`,
-        error
-      );
       return {
         success: false,
         error:
@@ -495,6 +401,77 @@ export class MessageProcessor {
           "Errore sconosciuto durante la pulizia della conversazione",
       };
     }
+  }
+
+  /**
+   * Helper method to clear messages from a specific path
+   */
+  private async clearMessagesFromPath(
+    path: string,
+    fromPub: string,
+    toPub: string,
+    pathType: "sender" | "recipient"
+  ): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      try {
+        const node = this.core.db.gun.get(path);
+        let clearedCount = 0;
+        let totalMessages = 0;
+        let completedOperations = 0;
+        let hasError = false;
+        let timeoutId: NodeJS.Timeout;
+
+        const checkCompletion = () => {
+          if (completedOperations === totalMessages && totalMessages > 0) {
+            clearTimeout(timeoutId);
+            if (hasError) {
+              reject(
+                new Error(`Errore durante la pulizia dei messaggi ${pathType}`)
+              );
+            } else {
+              resolve(clearedCount);
+            }
+          }
+        };
+
+        node.map().once((messageData: any, messageId: string) => {
+          totalMessages++;
+
+          // Check if this message should be cleared based on the conversation
+          // For private messages, we need to check the 'from' field at the top level
+          // The 'to' field is not stored at the top level, so we determine it based on the path context
+          // For recipient path: messages sent TO the recipient (from current user TO recipient)
+          // For sender path: messages received FROM the sender (from sender TO current user)
+          const shouldClear = messageData && messageData.from === fromPub;
+
+                    if (shouldClear) {
+            node.get(messageId).put(null, (ack: any) => {
+              completedOperations++;
+
+              if (ack.err) {
+                hasError = true;
+              } else {
+                clearedCount++;
+              }
+
+              checkCompletion();
+            });
+          } else {
+            completedOperations++;
+            checkCompletion();
+          }
+        });
+
+        // Handle case where no messages are found
+        timeoutId = setTimeout(() => {
+          if (totalMessages === 0) {
+            resolve(0);
+          }
+        }, 2000); // Increased timeout to 2 seconds
+      } catch (error) {
+        reject(error);
+      }
+    });
   }
 
   /**
@@ -517,11 +494,7 @@ export class MessageProcessor {
    * Resets the cleared conversations tracking
    */
   public resetClearedConversations(): void {
-    const previousCount = this.clearedConversations.size;
     this.clearedConversations.clear();
-    console.log(
-      `[MessageProcessor] 🔄 Reset cleared conversations tracking - ${previousCount} → ${this.clearedConversations.size} conversations`
-    );
   }
 
   /**
@@ -550,5 +523,12 @@ export class MessageProcessor {
    */
   public getClearedConversationsCount(): number {
     return this.clearedConversations.size;
+  }
+
+  /**
+   * Gets the number of group message listeners
+   */
+  public getGroupMessageListenersCount(): number {
+    return this.groupMessageListenersInternal.length;
   }
 }

@@ -59,16 +59,10 @@ export class GroupManager {
     }
 
     const allMemberPubs = Array.from(new Set([creatorPub, ...memberPubs]));
-    console.log(
-      "[GroupManager] 📋 Creating group with members:",
-      allMemberPubs
-    );
-
     // Store members as a Gun-friendly map instead of a raw array
     const membersMap: { [pub: string]: boolean } = {};
     for (const pub of allMemberPubs) {
       membersMap[pub] = true;
-      console.log(`[GroupManager] ✅ Added member to map: ${pub}`);
     }
     const encryptedKeys: { [pub: string]: string } = {};
     const failedMembers: string[] = [];
@@ -95,10 +89,6 @@ export class GroupManager {
           throw new Error("Encryption returned non-string value");
         }
       } catch (error) {
-        console.error(
-          `[GroupManager] ❌ Failed to encrypt key for ${memberPub}:`,
-          error
-        );
         failedMembers.push(memberPub);
       }
     }
@@ -184,11 +174,7 @@ export class GroupManager {
 
       await Promise.all([...memberWrites, ...keyWrites]);
     } catch (e) {
-      // TODO: Consider surfacing a warning to the caller if needed.
-      console.warn(
-        "[GroupManager] ⚠️ Non-critical warning: some group fields may not be fully materialized yet",
-        e
-      );
+      // Silent error handling
     }
 
     return { success: true, groupData };
@@ -281,7 +267,6 @@ export class GroupManager {
 
       return { success: true, messageId };
     } catch (error: any) {
-      console.error(`[GroupManager] ❌ Error sending group message:`, error);
       return {
         success: false,
         error:
@@ -307,8 +292,6 @@ export class GroupManager {
       });
 
       if (data) {
-        console.log(`[GroupManager] 🔍 Raw group data for ${groupId}:`, data);
-
         let normalizedMembers: string[] = [];
         // Explicitly fetch members by mapping over the 'members' node
         const membersNode = this.core.db.gun.get(groupId).get("members");
@@ -326,10 +309,6 @@ export class GroupManager {
             resolve();
           }, 1000); // Wait up to 1 second for members to be collected
         });
-        console.log(
-          "[GroupManager] 📋 Members from Gun.map():",
-          normalizedMembers
-        );
 
         let normalizedEncryptedKeys: Record<string, string> = {};
         // Explicitly fetch encrypted keys by mapping over the 'encryptedKeys' node
@@ -349,11 +328,6 @@ export class GroupManager {
             resolve();
           }, 1000); // Wait up to 1 second for keys to be collected
         });
-        console.log(
-          "[GroupManager] 📋 Encrypted keys from Gun.map():",
-          Object.keys(normalizedEncryptedKeys)
-        );
-
         const groupData: GroupData = {
           id: data.id,
           name: data.name,
@@ -362,22 +336,10 @@ export class GroupManager {
           createdAt: data.createdAt,
           encryptedKeys: normalizedEncryptedKeys, // Use the explicitly fetched keys
         };
-        console.log(`[GroupManager] ✅ Normalized group data for ${groupId}:`, {
-          id: groupData.id,
-          name: groupData.name,
-          memberCount: groupData.members.length,
-          members: groupData.members,
-          encryptedKeyCount: Object.keys(groupData.encryptedKeys).length,
-          encryptedKeys: Object.keys(groupData.encryptedKeys),
-        });
         return groupData;
       }
       return null;
     } catch (error) {
-      console.error(
-        `[GroupManager] ❌ Error getting group data for ${groupId}:`,
-        error
-      );
       return null;
     }
   }
@@ -430,14 +392,6 @@ export class GroupManager {
     const userPubNorm = normalize(userPub);
     const createdByNorm = normalize(groupData.createdBy);
 
-    console.log(
-      `[GroupManager] 🔑 Getting group key for user ${userPub} (normalized: ${userPubNorm})`
-    );
-    console.log(
-      `[GroupManager] 📋 Available encrypted keys:`,
-      Object.keys(groupData.encryptedKeys || {})
-    );
-
     // Try to get encrypted key for user
     let encryptedGroupKey: string | undefined =
       groupData.encryptedKeys[userPub];
@@ -469,15 +423,11 @@ export class GroupManager {
 
     // Self-heal: if user is creator and own key is missing, try to recover
     if (!encryptedGroupKey && createdByNorm === userPubNorm) {
-      console.log(
-        "[GroupManager] ⚠️ Creator's key missing, attempting recovery..."
-      );
       encryptedGroupKey = await this.recoverCreatorGroupKey(
         groupData,
         currentUserPair
       );
       if (encryptedGroupKey) {
-        console.log("[GroupManager] ✅ Creator's key recovered.");
         // Attempt to persist the recovered key back to GunDB for future use
         try {
           await new Promise<void>((resolve, reject) => {
@@ -490,14 +440,8 @@ export class GroupManager {
                 else resolve();
               });
           });
-          console.log(
-            "[GroupManager] 💾 Recovered creator key persisted to GunDB."
-          );
         } catch (e) {
-          console.warn(
-            "[GroupManager] ⚠️ Failed to persist recovered creator key:",
-            e
-          );
+          // Silent error handling
         }
       }
     }

@@ -19,7 +19,7 @@ export class MessagingPlugin extends BasePlugin {
     "End-to-end encrypted messaging plugin for Shogun SDK";
   public readonly _category = "messaging";
 
-  private core: ShogunCore;
+  protected core: ShogunCore;
   private encryptionManager: EncryptionManager;
   private messageProcessor: MessageProcessor;
   private groupManager: GroupManager;
@@ -70,9 +70,7 @@ export class MessagingPlugin extends BasePlugin {
       this.groupManager
     );
 
-    console.log(
-      "[MessagingPlugin] ✅ Protocol layer initialized successfully - 4 send functions ready"
-    );
+
   }
 
   // ============================================================================
@@ -137,21 +135,9 @@ export class MessagingPlugin extends BasePlugin {
         Object.keys({ content: "", timestamp: 0, id: "" }).sort()
       );
 
-      console.log(
-        `[MessagingPlugin] 🔍 Creating signature for message ${messageId}:`
-      );
-      console.log(`[MessagingPlugin] 📝 Data to sign: ${dataToSign}`);
-      console.log(
-        `[MessagingPlugin] 👤 Sender pub: ${senderPub.slice(0, 8)}...`
-      );
-
       messageData.signature = await this.core.db.sea.sign(
         dataToSign,
         currentUserPair
-      );
-
-      console.log(
-        `[MessagingPlugin] 🔑 Created signature: ${messageData.signature.slice(0, 20)}...`
       );
 
       // Encrypt the entire message for the recipient
@@ -185,10 +171,6 @@ export class MessagingPlugin extends BasePlugin {
 
       return { success: true, messageId };
     } catch (error: any) {
-      console.error(
-        `[MessagingPlugin] ❌ Error sending private message:`,
-        error
-      );
       return {
         success: false,
         error:
@@ -302,7 +284,10 @@ export class MessagingPlugin extends BasePlugin {
 
       if (chatType === "token") {
         // Join token room and return room data
-        const result = await this.tokenRoomManager.joinTokenRoom(chatId, arguments[2] || "");
+        const result = await this.tokenRoomManager.joinTokenRoom(
+          chatId,
+          arguments[2] || ""
+        );
         return {
           success: result.success,
           chatData: result.roomData,
@@ -411,7 +396,6 @@ export class MessagingPlugin extends BasePlugin {
       await this.encryptionManager.ensureUserEpubPublished();
       return { success: true };
     } catch (error: any) {
-      console.error(`[MessagingPlugin] ❌ Error publishing user epub:`, error);
       return {
         success: false,
         error: error.message || "Failed to publish encryption key",
@@ -510,6 +494,16 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   /**
+   * Deletes a token room completely from the database
+   * Only the room creator can delete the room
+   */
+  public async deleteTokenRoom(
+    roomId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.tokenRoomManager.deleteTokenRoom(roomId);
+  }
+
+  /**
    * Registers a callback for raw group messages (protocol level)
    */
   public onRawGroupMessage(callback: any): void {
@@ -549,6 +543,15 @@ export class MessagingPlugin extends BasePlugin {
    */
   public areProtocolListenersActive(): boolean {
     return this.messageProcessor.isListening();
+  }
+
+  /**
+   * Clears all messages for a specific conversation
+   */
+  public async clearConversation(
+    recipientPub: string
+  ): Promise<{ success: boolean; error?: string; clearedCount?: number }> {
+    return this.messageProcessor.clearConversation(recipientPub);
   }
 
   /**

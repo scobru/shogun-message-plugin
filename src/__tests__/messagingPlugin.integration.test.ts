@@ -22,7 +22,7 @@ function makeCoreMock() {
     decrypt: jest.fn(async (data: string, secret: string) => JSON.stringify({ content: "decrypted" })),
   };
 
-  // Create a mock that supports chained .get() calls
+  // Create a mock that supports chained .get() calls with proper put method
   const createMockGunNode = () => {
     const node = {
       put: jest.fn((data: any, callback?: any) => {
@@ -41,13 +41,24 @@ function makeCoreMock() {
     return node;
   };
 
+  // Create a mock user chain that supports the expected methods
+  const createMockUserChain = () => {
+    const userChain = {
+      get: jest.fn(() => createMockGunNode()),
+      put: jest.fn((data: any, callback?: any) => {
+        if (callback && typeof callback === 'function') {
+          callback({});
+        }
+        return userChain;
+      }),
+      once: jest.fn((callback: any) => callback({ epub: "recipient_epub" }))
+    };
+    return userChain;
+  };
+
   const gun = {
     get: jest.fn(() => createMockGunNode()),
-    user: jest.fn(() => ({ 
-      get: jest.fn(() => ({ 
-        once: jest.fn((callback: any) => callback({ epub: "recipient_epub" }))
-      }))
-    })),
+    user: jest.fn(() => createMockUserChain()),
   };
 
   const user = { _?: { sea: currentUserPair } } as any;
@@ -109,7 +120,7 @@ describe("MessagingPlugin Integration", () => {
       const result = await messagingPlugin.sendMessage("recipient_pub", "Hello");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Devi essere loggato");
+      expect(result.error).toContain("Devi essere loggato per inviare un messaggio.");
     });
 
     test("should fail with invalid inputs", async () => {
