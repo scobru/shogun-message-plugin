@@ -3341,10 +3341,10 @@ shebang-regex@^3.0.0:
   resolved "https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz"
   integrity sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==
 
-shogun-core@^1.6.16:
-  version "1.6.17"
-  resolved "https://registry.npmjs.org/shogun-core/-/shogun-core-1.6.17.tgz"
-  integrity sha512-IYf5I9cREC8xOE62fW8V+B7dcgLmpYeAeRibZ0Oq9zRC1bvjzkA3a/8VFE92yYizQgOCkMWu0A6UoKaJd8CfQw==
+shogun-core@^1.7.1:
+  version "1.7.1"
+  resolved "https://registry.yarnpkg.com/shogun-core/-/shogun-core-1.7.1.tgz#7f7edfdaa0f03c6c76fba10f28dbac71cee5ad95"
+  integrity sha512-ik4hmeiDm9cN+hxUpOW3Qm7bAwDT3+Yprrhyhx6cJ5H99IKWMF51JZPp+JU5xeAoPdFMmObGw0MNRrU8sRn/WQ==
   dependencies:
     "@noble/curves" "^1.9.1"
     ajv "^8.17.1"

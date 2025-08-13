@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "gun": "^0.2020.1235",
-    "shogun-core": "^1.6.16",
+    "shogun-core": "^1.7.1",
     "yarn": "^1.22.22"
   },
   "devDependencies": {

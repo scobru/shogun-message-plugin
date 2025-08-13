@@ -1,6 +1,15 @@
 import { ShogunCore } from "shogun-core";
-import { PublicMessage, MessageResponse, PublicMessageListener } from "./types";
-import { generateMessageId, createSafePath } from "./utils";
+import {
+  PublicMessage,
+  MessageResponse,
+  PublicMessageListener,
+  PublicRoomData,
+} from "./types";
+import {
+  generateMessageId,
+  createSafePath,
+  generateSecureToken,
+} from "./utils";
 import { EncryptionManager } from "./encryption";
 
 /**
@@ -15,10 +24,219 @@ export class PublicRoomManager {
   private readonly MAX_PROCESSED_MESSAGES = 1000;
   private readonly MESSAGE_TTL = 24 * 60 * 60 * 1000; // 24 ore
   private publicMessageListener: any = null;
+  private roomDiscoveryListener: any = null;
+  private _isDiscoveringRooms = false;
 
   constructor(core: ShogunCore, encryptionManager: EncryptionManager) {
     this.core = core;
     this.encryptionManager = encryptionManager;
+  }
+
+  /**
+   * Creates a new public room
+   */
+  public async createPublicRoom(
+    roomName: string,
+    description?: string
+  ): Promise<{ success: boolean; roomData?: PublicRoomData; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return {
+        success: false,
+        error: "Devi essere loggato per creare una sala pubblica.",
+      };
+    }
+
+    if (
+      !roomName ||
+      typeof roomName !== "string" ||
+      roomName.trim().length === 0
+    ) {
+      return {
+        success: false,
+        error: "Il nome della sala è obbligatorio.",
+      };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return {
+          success: false,
+          error: "Coppia di chiavi utente non disponibile",
+        };
+      }
+
+      const senderPub = currentUserPair.pub;
+      const roomId = roomName.toLowerCase().replace(/[^a-z0-9]/g, "-");
+      const timestamp = Date.now();
+
+      // Create room data
+      const roomData: PublicRoomData = {
+        id: roomId,
+        name: roomName.trim(),
+        description: description?.trim(),
+        createdBy: senderPub,
+        createdAt: timestamp,
+        memberCount: 0,
+        isActive: true,
+      };
+
+      // Store room data in GunDB
+      const roomsNode = this.core.db.gun.get("public_rooms");
+      await new Promise<void>((resolve, reject) => {
+        roomsNode.get(roomId).put(roomData, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(ack.err));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      return { success: true, roomData };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Errore durante la creazione della sala",
+      };
+    }
+  }
+
+  /**
+   * Gets all available public rooms
+   */
+  public async getPublicRooms(): Promise<PublicRoomData[]> {
+    if (!this.core.isLoggedIn()) {
+      return [];
+    }
+
+    return new Promise((resolve) => {
+      const rooms: PublicRoomData[] = [];
+      const roomsNode = this.core.db.gun.get("public_rooms");
+
+      roomsNode.map().once((roomData: any, roomId: string) => {
+        if (roomData && roomData.name && roomData.isActive !== false) {
+          rooms.push({
+            id: roomId,
+            name: roomData.name,
+            description: roomData.description,
+            createdBy: roomData.createdBy,
+            createdAt: roomData.createdAt,
+            memberCount: roomData.memberCount || 0,
+            lastMessage: roomData.lastMessage,
+            lastMessageTime: roomData.lastMessageTime,
+            isActive: roomData.isActive !== false,
+          });
+        }
+      });
+
+      // Resolve after a short delay to allow GunDB to sync
+      setTimeout(() => {
+        resolve(rooms.sort((a, b) => b.createdAt - a.createdAt));
+      }, 1000);
+    });
+  }
+
+  /**
+   * Gets a specific public room by ID
+   */
+  public async getPublicRoom(roomId: string): Promise<PublicRoomData | null> {
+    if (!this.core.isLoggedIn() || !roomId) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      const roomsNode = this.core.db.gun.get("public_rooms");
+
+      roomsNode.get(roomId).once((roomData: any) => {
+        if (roomData && roomData.name && roomData.isActive !== false) {
+          resolve({
+            id: roomId,
+            name: roomData.name,
+            description: roomData.description,
+            createdBy: roomData.createdBy,
+            createdAt: roomData.createdAt,
+            memberCount: roomData.memberCount || 0,
+            lastMessage: roomData.lastMessage,
+            lastMessageTime: roomData.lastMessageTime,
+            isActive: roomData.isActive !== false,
+          });
+        } else {
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  /**
+   * Starts room discovery to listen for new rooms
+   */
+  public startRoomDiscovery(): void {
+    if (!this.core.isLoggedIn() || this._isDiscoveringRooms) {
+      return;
+    }
+
+    this._isDiscoveringRooms = true;
+    const roomsNode = this.core.db.gun.get("public_rooms");
+
+    this.roomDiscoveryListener = roomsNode
+      .map()
+      .on((roomData: any, roomId: string) => {
+        // Room discovery callback - can be used for real-time updates
+        if (roomData && roomData.name) {
+          console.log("🔍 PublicRoomManager: New room discovered", {
+            roomId,
+            roomName: roomData.name,
+          });
+        }
+      });
+  }
+
+  /**
+   * Stops room discovery
+   */
+  public stopRoomDiscovery(): void {
+    if (this.roomDiscoveryListener) {
+      this.roomDiscoveryListener.off();
+      this.roomDiscoveryListener = null;
+    }
+    this._isDiscoveringRooms = false;
+  }
+
+  /**
+   * Updates room metadata (last message, member count, etc.)
+   */
+  private async updateRoomMetadata(
+    roomId: string,
+    updates: Partial<PublicRoomData>
+  ): Promise<void> {
+    if (!this.core.isLoggedIn()) return;
+
+    try {
+      const roomsNode = this.core.db.gun.get("public_rooms");
+      const roomNode = roomsNode.get(roomId);
+
+      // Get current room data
+      const currentData = await new Promise<any>((resolve) => {
+        roomNode.once((data: any) => resolve(data));
+      });
+
+      if (currentData) {
+        // Update with new data
+        const updatedData = { ...currentData, ...updates };
+        await new Promise<void>((resolve, reject) => {
+          roomNode.put(updatedData, (ack: any) => {
+            if (ack.err) {
+              reject(new Error(ack.err));
+            } else {
+              resolve();
+            }
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Error updating room metadata:", error);
+    }
   }
 
   /**
@@ -86,24 +304,13 @@ export class PublicRoomManager {
       };
 
       // Usa il metodo condiviso per inviare a GunDB
-      // Debug logging (commented out to avoid test issues)
-      // console.log("🔍 PublicRoomManager: Sending to GunDB", {
-      //   roomId,
-      //   messageId,
-      //   path: `room_${roomId}`,
-      //   messageData: {
-      //     from: signedMessage.from,
-      //     content: signedMessage.content.substring(0, 20) + "...",
-      //     timestamp: signedMessage.timestamp,
-      //   },
-      // });
-
       await this.sendToGunDB(roomId, messageId, signedMessage, "public");
 
-      // console.log("✅ PublicRoomManager: Message sent to GunDB successfully", {
-      //   messageId,
-      //   roomId,
-      // });
+      // Update room metadata with last message
+      await this.updateRoomMetadata(roomId, {
+        lastMessage: messageContent.substring(0, 100),
+        lastMessageTime: publicMessage.timestamp,
+      });
 
       return { success: true, messageId };
     } catch (error: any) {
@@ -140,27 +347,8 @@ export class PublicRoomManager {
     // Listener per messaggi pubblici
     const roomNode = this.core.db.gun.get(`room_${roomId}`).map();
 
-    // Debug logging (commented out to avoid test issues)
-    // console.log("🔍 PublicRoomManager: Setting up listener for room", {
-    //   roomId,
-    //   path: `room_${roomId}`,
-    //   currentUserPub: currentUserPub.substring(0, 10) + "..."
-    // });
-
     this.publicMessageListener = roomNode.on(
       async (messageData: any, messageId: string) => {
-        // Debug logging (commented out to avoid test issues)
-        // console.log("🔍 PublicRoomManager: Raw message received", {
-        //   messageId,
-        //   hasMessageData: !!messageData,
-        //   messageData: messageData ? {
-        //     from: messageData.from?.substring(0, 10) + "...",
-        //     content: messageData.content?.substring(0, 20) + "...",
-        //     roomId: messageData.roomId,
-        //     timestamp: messageData.timestamp
-        //   } : null
-        // });
-
         await this.processIncomingPublicMessage(
           messageData,
           messageId,
@@ -205,35 +393,13 @@ export class PublicRoomManager {
     currentUserPub: string,
     roomId: string
   ): Promise<void> {
-    console.log("🔍 PublicRoomManager: Processing incoming message", {
-      messageId,
-      hasContent: !!messageData?.content,
-      hasFrom: !!messageData?.from,
-      hasRoomId: !!messageData?.roomId,
-      messageRoomId: messageData?.roomId,
-      expectedRoomId: roomId,
-      messageFrom: messageData?.from?.substring(0, 10) + "...",
-      currentUserPub: currentUserPub.substring(0, 10) + "...",
-      isFromSelf: messageData?.from === currentUserPub,
-      roomIdMatch: messageData?.roomId === roomId,
-    });
-
-    // Validazione base (rimuoviamo il filtro per i messaggi propri)
+    // Validazione base
     if (
       !messageData?.content ||
       !messageData?.from ||
       !messageData?.roomId ||
       messageData.roomId !== roomId
-      // messageData.from === currentUserPub  // Rimuoviamo questo filtro
     ) {
-      // Debug logging (commented out to avoid test issues)
-      // console.log("❌ PublicRoomManager: Message filtered out", {
-      //   reason: !messageData?.content ? "no content" :
-      //           !messageData?.from ? "no from" :
-      //           !messageData?.roomId ? "no roomId" :
-      //           messageData.roomId !== roomId ? "roomId mismatch" :
-      //           messageData.from === currentUserPub ? "from self" : "unknown"
-      // });
       return;
     }
 
@@ -330,26 +496,11 @@ export class PublicRoomManager {
 
     return new Promise<void>((resolve, reject) => {
       try {
-        // Debug logging (commented out to avoid test issues)
-        // console.log("🔍 PublicRoomManager: GunDB put operation", {
-        //   safePath,
-        //   messageId,
-        //   hasMessageData: !!messageData,
-        // });
-
         messageNode.get(messageId).put(messageData, (ack: any) => {
-          // Debug logging (commented out to avoid test issues)
-          // console.log("🔍 PublicRoomManager: GunDB put callback", {
-          //   ack,
-          //   hasError: !!ack.err,
-          //   error: ack.err,
-          // });
-
           if (ack.err) {
             console.error("❌ PublicRoomManager: GunDB put error", ack.err);
             reject(new Error(ack.err));
           } else {
-            // console.log("✅ PublicRoomManager: GunDB put success");
             resolve();
           }
         });
@@ -379,6 +530,13 @@ export class PublicRoomManager {
   }
 
   /**
+   * Gets the room discovery status
+   */
+  public isDiscoveringRooms(): boolean {
+    return this._isDiscoveringRooms;
+  }
+
+  /**
    * Gets the number of public message listeners
    */
   public getPublicMessageListenersCount(): number {
@@ -390,5 +548,52 @@ export class PublicRoomManager {
    */
   public getProcessedPublicMessagesCount(): number {
     return this.processedPublicMessageIds.size;
+  }
+
+  /**
+   * Initializes default public rooms if none exist
+   */
+  public async initializeDefaultRooms(): Promise<void> {
+    if (!this.core.isLoggedIn()) return;
+
+    try {
+      const existingRooms = await this.getPublicRooms();
+
+      // Only create default rooms if no rooms exist
+      if (existingRooms.length === 0) {
+        const defaultRooms = [
+          {
+            name: "general",
+            description: "Discussione generale - benvenuti tutti!",
+          },
+          {
+            name: "help",
+            description: "Supporto e aiuto per l'uso dell'app",
+          },
+          {
+            name: "random",
+            description: "Argomenti casuali e conversazioni informali",
+          },
+          {
+            name: "announcements",
+            description: "Annunci ufficiali e aggiornamenti",
+          },
+        ];
+
+        for (const room of defaultRooms) {
+          try {
+            await this.createPublicRoom(room.name, room.description);
+            console.log(`✅ Created default room: ${room.name}`);
+          } catch (error) {
+            console.error(
+              `❌ Failed to create default room ${room.name}:`,
+              error
+            );
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error initializing default rooms:", error);
+    }
   }
 }

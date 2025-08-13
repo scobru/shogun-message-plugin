@@ -82,6 +82,18 @@ export interface TokenRoomData {
   maxParticipants?: number;
 }
 
+export interface PublicRoomData {
+  id: string;
+  name: string;
+  description?: string;
+  createdBy: string;
+  createdAt: number;
+  memberCount?: number;
+  lastMessage?: string;
+  lastMessageTime?: number;
+  isActive?: boolean;
+}
+
 // Group types
 export interface GroupMessage {
   from: string;

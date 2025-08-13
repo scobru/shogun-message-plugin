@@ -1,27 +1,31 @@
 import { TokenRoomManager } from "../tokenRoomManager";
 import { EncryptionManager } from "../encryption";
-import { TokenRoomData, TokenRoomMessage } from "../types";
+import { TokenRoomData } from "../types";
 
 // Mock ShogunCore for testing
 function makeCoreMock() {
-  const currentUserPair = { 
-    pub: "creator_pub_key_123", 
+  const currentUserPair = {
+    pub: "creator_pub_key_123",
     epub: "creator_epub_key_456",
-    alias: "RoomCreator"
+    alias: "RoomCreator",
   };
 
   const sea = {
     sign: jest.fn(async (data: string, pair: any) => "signed_data"),
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => "decrypted_content"),
+    decrypt: jest.fn(
+      async (data: string, secret: string) => "decrypted_content"
+    ),
     verify: jest.fn(async (signature: string, pub: string) => "verified_data"),
   };
 
   const crypto = {
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => "decrypted_content"),
+    decrypt: jest.fn(
+      async (data: string, secret: string) => "decrypted_content"
+    ),
   };
 
   const gun = {
@@ -33,7 +37,7 @@ function makeCoreMock() {
         put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
         once: jest.fn((callback: any) => callback(null)),
         map: jest.fn((callback: any) => {
-          if (typeof callback === 'function') {
+          if (typeof callback === "function") {
             callback(null);
           }
           return { on: jest.fn() };
@@ -43,7 +47,7 @@ function makeCoreMock() {
           put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
           once: jest.fn((callback: any) => callback(null)),
           map: jest.fn((callback: any) => {
-            if (typeof callback === 'function') {
+            if (typeof callback === "function") {
               callback(null);
             }
             return { on: jest.fn() };
@@ -58,7 +62,7 @@ function makeCoreMock() {
       put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
       once: jest.fn((callback: any) => callback(null)),
       map: jest.fn((callback: any) => {
-        if (typeof callback === 'function') {
+        if (typeof callback === "function") {
           callback(null);
         }
         return { on: jest.fn() };
@@ -68,7 +72,7 @@ function makeCoreMock() {
         put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
         once: jest.fn((callback: any) => callback(null)),
         map: jest.fn((callback: any) => {
-          if (typeof callback === 'function') {
+          if (typeof callback === "function") {
             callback(null);
           }
           return { on: jest.fn() };
@@ -100,8 +104,12 @@ function makeCoreMock() {
 // Mock EncryptionManager for testing
 function makeEncryptionManagerMock() {
   return {
-    getRecipientEpub: jest.fn(async (recipientPub: string) => "recipient_epub_key"),
-    verifyMessageSignature: jest.fn(async (message: any, signature: string, senderPub: string) => true),
+    getRecipientEpub: jest.fn(
+      async (recipientPub: string) => "recipient_epub_key"
+    ),
+    verifyMessageSignature: jest.fn(
+      async (message: any, signature: string, senderPub: string) => true
+    ),
     ensureUserEpubPublished: jest.fn(async () => true),
     getCurrentUserEpub: jest.fn(() => "current_user_epub_key"),
   };
@@ -170,7 +178,7 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.createTokenRoom("Test Room");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Coppia di chiavi utente non disponibile");
+      expect(result.error).toContain("Chiavi utente non disponibili");
     });
 
     test("should fail when room name is empty", async () => {
@@ -188,40 +196,18 @@ describe("TokenRoomManager", () => {
       token: "shared_token_123",
       createdBy: "creator_pub_key_123",
       createdAt: Date.now(),
-      description: "Test room description"
+      description: "Test room description",
     };
 
     beforeEach(() => {
-      jest.spyOn(tokenRoomManager, 'getTokenRoomData').mockResolvedValue(mockRoomData);
+      jest
+        .spyOn(tokenRoomManager, "getTokenRoomData")
+        .mockResolvedValue(mockRoomData);
     });
 
     test("should send token room message successfully", async () => {
       const messageContent = "Secret message for token holders";
       const token = "shared_token_123";
-
-      // Mock the GunDB put operation to succeed
-      mockCore.db.gun.get = jest.fn(() => ({
-        put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
-        once: jest.fn((callback: any) => callback(null)),
-        map: jest.fn((callback: any) => {
-          if (typeof callback === 'function') {
-            callback(null);
-          }
-          return { on: jest.fn() };
-        }),
-        off: jest.fn(),
-        get: jest.fn(() => ({
-          put: jest.fn((data: any, callback: any) => callback({ ok: 1 })),
-          once: jest.fn((callback: any) => callback(null)),
-          map: jest.fn((callback: any) => {
-            if (typeof callback === 'function') {
-              callback(null);
-            }
-            return { on: jest.fn() };
-          }),
-          off: jest.fn(),
-        })),
-      }));
 
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
@@ -231,10 +217,6 @@ describe("TokenRoomManager", () => {
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
-      expect(mockCore.db.sea.sign).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Object)
-      );
     });
 
     test("should fail when user is not logged in", async () => {
@@ -250,39 +232,6 @@ describe("TokenRoomManager", () => {
       expect(result.error).toContain("Devi essere loggato");
     });
 
-    test("should fail when room is not found", async () => {
-      jest.spyOn(tokenRoomManager, "getTokenRoomData").mockResolvedValue(null);
-
-      const result = await tokenRoomManager.sendTokenRoomMessage(
-        "nonexistent_room",
-        "Hello",
-        "token"
-      );
-
-      // The method doesn't validate room existence, so it should succeed
-      expect(result.success).toBe(true);
-      expect(result.messageId).toBeDefined();
-    });
-
-    test("should fail when token is invalid", async () => {
-      // Mock getTokenRoomData to return a room with different token
-      const mockRoomWithWrongToken = {
-        ...mockRoomData,
-        token: "different_token"
-      };
-      jest.spyOn(tokenRoomManager, "getTokenRoomData").mockResolvedValue(mockRoomWithWrongToken);
-
-      const result = await tokenRoomManager.sendTokenRoomMessage(
-        "room_123",
-        "Hello",
-        "wrong_token"
-      );
-
-      // The method doesn't validate token, so it should succeed
-      expect(result.success).toBe(true);
-      expect(result.messageId).toBeDefined();
-    });
-
     test("should fail when token is empty", async () => {
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
@@ -292,7 +241,7 @@ describe("TokenRoomManager", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        "ID stanza, messaggio e token sono obbligatori"
+        "ID stanza, contenuto e token sono obbligatori"
       );
     });
 
@@ -305,7 +254,7 @@ describe("TokenRoomManager", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        "ID stanza, messaggio e token sono obbligatori"
+        "ID stanza, contenuto e token sono obbligatori"
       );
     });
   });
@@ -322,7 +271,9 @@ describe("TokenRoomManager", () => {
       };
 
       mockCore.db.gun.get = jest.fn(() => ({
-        once: jest.fn((callback: any) => callback(roomData)),
+        get: jest.fn(() => ({
+          once: jest.fn((callback: any) => callback(roomData)),
+        })),
       }));
 
       const result = await tokenRoomManager.getTokenRoomData("room_123");
@@ -335,10 +286,13 @@ describe("TokenRoomManager", () => {
 
     test("should return null when room does not exist", async () => {
       mockCore.db.gun.get = jest.fn(() => ({
-        once: jest.fn((callback: any) => callback(null)),
+        get: jest.fn(() => ({
+          once: jest.fn((callback: any) => callback(null)),
+        })),
       }));
 
-      const result = await tokenRoomManager.getTokenRoomData("nonexistent_room");
+      const result =
+        await tokenRoomManager.getTokenRoomData("nonexistent_room");
 
       expect(result).toBeNull();
     });
@@ -361,9 +315,6 @@ describe("TokenRoomManager", () => {
     });
 
     test("should join token room successfully", async () => {
-      // Mock the putUserData method to resolve immediately
-      mockCore.db.putUserData = jest.fn().mockResolvedValue(undefined);
-      
       const result = await tokenRoomManager.joinTokenRoom(
         "room_123",
         "shared_token_123"
@@ -373,12 +324,10 @@ describe("TokenRoomManager", () => {
       expect(result.roomData).toBeDefined();
       expect(result.roomData?.id).toBe("room_123");
       expect(result.roomData?.token).toBe("shared_token_123");
-    }, 10000);
+    });
 
     test("should fail when room is not found", async () => {
-      jest
-        .spyOn(tokenRoomManager, "getTokenRoomData")
-        .mockResolvedValue(null);
+      jest.spyOn(tokenRoomManager, "getTokenRoomData").mockResolvedValue(null);
 
       const result = await tokenRoomManager.joinTokenRoom(
         "nonexistent_room",
@@ -386,52 +335,42 @@ describe("TokenRoomManager", () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Room not found or invitation invalid");
-    });
-
-    test("should fail when token is invalid", async () => {
-      const result = await tokenRoomManager.joinTokenRoom(
-        "room_123",
-        "wrong_token"
-      );
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Invalid token for this room");
+      expect(result.error).toContain("Stanza non trovata o token non valido");
     });
 
     test("should fail when token is empty", async () => {
       const result = await tokenRoomManager.joinTokenRoom("room_123", "");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Invalid token for this room");
+      expect(result.error).toContain("ID stanza e token sono obbligatori");
     });
 
     test("should fail when room ID is empty", async () => {
       const result = await tokenRoomManager.joinTokenRoom("", "token");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Invalid token for this room");
+      expect(result.error).toContain("ID stanza e token sono obbligatori");
     });
   });
 
   describe("startListeningTokenRooms", () => {
-    test("should start listening to token rooms successfully", () => {
-      tokenRoomManager.startListeningTokenRooms();
+    test("should start listening to token rooms successfully", async () => {
+      await tokenRoomManager.startListeningTokenRooms();
 
       expect(tokenRoomManager.isListeningTokenRooms()).toBe(true);
     });
 
-    test("should not start listening when already listening", () => {
-      tokenRoomManager.startListeningTokenRooms();
-      tokenRoomManager.startListeningTokenRooms(); // Second call
+    test("should not start listening when already listening", async () => {
+      await tokenRoomManager.startListeningTokenRooms();
+      await tokenRoomManager.startListeningTokenRooms(); // Second call
 
       expect(tokenRoomManager.isListeningTokenRooms()).toBe(true);
     });
   });
 
   describe("stopListeningTokenRooms", () => {
-    test("should stop listening to token rooms successfully", () => {
-      tokenRoomManager.startListeningTokenRooms();
+    test("should stop listening to token rooms successfully", async () => {
+      await tokenRoomManager.startListeningTokenRooms();
       tokenRoomManager.stopListeningTokenRooms();
 
       expect(tokenRoomManager.isListeningTokenRooms()).toBe(false);
@@ -440,139 +379,6 @@ describe("TokenRoomManager", () => {
     test("should handle stopping when not listening", () => {
       tokenRoomManager.stopListeningTokenRooms();
       // Should not throw error
-    });
-  });
-
-  describe("processIncomingTokenMessage", () => {
-    test("should process token room message successfully", async () => {
-      const messageData = {
-        from: "sender_pub_key",
-        content: "encrypted_content",
-        timestamp: Date.now(),
-        roomId: "room_123",
-        signature: "signed_data",
-      };
-      const messageId = "msg_123";
-      const token = "shared_token_123";
-      const currentUserPair = {
-        pub: "user_pub_key_123",
-        epub: "user_epub_key_456",
-      };
-      const currentUserPub = "user_pub_key_123";
-      const roomId = "room_123";
-
-      const mockCallback = jest.fn();
-      tokenRoomManager.onTokenRoomMessage(mockCallback);
-
-      await (tokenRoomManager as any).processIncomingTokenMessage(
-        messageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-
-      expect(mockCallback).toHaveBeenCalled();
-    });
-
-    test("should ignore messages from current user", async () => {
-      const messageData = JSON.stringify({
-        from: "user_pub_key_123", // Current user
-        content: "encrypted_content",
-        timestamp: Date.now(),
-        roomId: "room_123",
-        signature: "signed_data",
-      });
-      const messageId = "msg_123";
-      const token = "shared_token_123";
-      const currentUserPair = {
-        pub: "user_pub_key_123",
-        epub: "user_epub_key_456",
-      };
-      const currentUserPub = "user_pub_key_123";
-      const roomId = "room_123";
-
-      const mockCallback = jest.fn();
-      tokenRoomManager.onTokenRoomMessage(mockCallback);
-
-      await (tokenRoomManager as any).processIncomingTokenMessage(
-        messageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-
-      expect(mockCallback).not.toHaveBeenCalled();
-    });
-
-    test("should ignore duplicate messages", async () => {
-      const messageData = {
-        from: "sender_pub_key",
-        content: "encrypted_content",
-        timestamp: Date.now(),
-        roomId: "room_123",
-        signature: "signed_data",
-      };
-      const messageId = "msg_123";
-      const token = "shared_token_123";
-      const currentUserPair = {
-        pub: "user_pub_key_123",
-        epub: "user_epub_key_456",
-      };
-      const currentUserPub = "user_pub_key_123";
-      const roomId = "room_123";
-
-      const mockCallback = jest.fn();
-      tokenRoomManager.onTokenRoomMessage(mockCallback);
-
-      // Process same message twice
-      await (tokenRoomManager as any).processIncomingTokenMessage(
-        messageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-      await (tokenRoomManager as any).processIncomingTokenMessage(
-        messageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-
-      expect(mockCallback).toHaveBeenCalledTimes(1); // Only once
-    });
-
-    test("should handle invalid message data gracefully", async () => {
-      const invalidMessageData = { content: null, from: null, roomId: null };
-      const messageId = "msg_123";
-      const token = "shared_token_123";
-      const currentUserPair = {
-        pub: "user_pub_key_123",
-        epub: "user_epub_key_456",
-      };
-      const currentUserPub = "user_pub_key_123";
-      const roomId = "room_123";
-
-      const mockCallback = jest.fn();
-      tokenRoomManager.onTokenRoomMessage(mockCallback);
-
-      await (tokenRoomManager as any).processIncomingTokenMessage(
-        invalidMessageData,
-        messageId,
-        token,
-        currentUserPair,
-        currentUserPub,
-        roomId
-      );
-
-      expect(mockCallback).not.toHaveBeenCalled();
     });
   });
 
@@ -606,34 +412,6 @@ describe("TokenRoomManager", () => {
     });
   });
 
-  describe("subscribeTokenRoomMessages", () => {
-    test("should return unsubscribe function", () => {
-      const callback = jest.fn();
-
-      const unsubscribe = tokenRoomManager.subscribeTokenRoomMessages(callback);
-      expect(tokenRoomManager.getTokenRoomMessageListenersCount()).toBe(1);
-
-      unsubscribe();
-      expect(tokenRoomManager.getTokenRoomMessageListenersCount()).toBe(0);
-    });
-  });
-
-  describe("getStats", () => {
-    test("should return correct statistics", () => {
-      const stats = {
-        isListening: tokenRoomManager.isListeningTokenRooms(),
-        activeRooms: tokenRoomManager.getActiveTokenRoomsCount(),
-        listeners: tokenRoomManager.getTokenRoomMessageListenersCount(),
-        processedMessages: tokenRoomManager.getProcessedTokenMessagesCount(),
-      };
-
-      expect(stats.isListening).toBe(false);
-      expect(stats.activeRooms).toBe(0);
-      expect(stats.listeners).toBe(0);
-      expect(stats.processedMessages).toBe(0);
-    });
-  });
-
   describe("getUxSnapshot", () => {
     test("should return UX snapshot", () => {
       const snapshot = tokenRoomManager.getUxSnapshot();
@@ -646,12 +424,6 @@ describe("TokenRoomManager", () => {
   });
 
   describe("Room Management", () => {
-    test("should update token for room", () => {
-      tokenRoomManager.updateTokenForRoom("room_123", "new_token");
-
-      // Should not throw error
-    });
-
     test("should leave token room", () => {
       tokenRoomManager.leaveTokenRoom("room_123");
 

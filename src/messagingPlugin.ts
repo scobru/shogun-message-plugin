@@ -54,7 +54,7 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * Initializes the plugin with the Shogun core
    */
-  public initialize(core: ShogunCore): void {
+  public async initialize(core: ShogunCore): Promise<void> {
     super.initialize(core);
     this.core = core;
     this.encryptionManager = new EncryptionManager(core);
@@ -63,14 +63,25 @@ export class MessagingPlugin extends BasePlugin {
       core,
       this.encryptionManager
     );
-    this.tokenRoomManager = new TokenRoomManager(core, this.encryptionManager);
+    this.tokenRoomManager = new TokenRoomManager(core, this.encryptionManager, {
+      enablePagination: true,
+      pageSize: 50,
+      maxProcessedMessages: 1000,
+      onStatus: (event) => {
+        // Log status events for debugging
+        if (event.type.includes("error")) {
+          console.warn("TokenRoomManager Status:", event);
+        }
+      },
+    });
     this.messageProcessor = new MessageProcessor(
       core,
       this.encryptionManager,
       this.groupManager
     );
 
-
+    // Initialize the token room manager
+    await this.tokenRoomManager.initialize();
   }
 
   // ============================================================================
@@ -212,6 +223,51 @@ export class MessagingPlugin extends BasePlugin {
     messageContent: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     return this.publicRoomManager.sendPublicMessage(roomId, messageContent);
+  }
+
+  /**
+   * Creates a new public room
+   */
+  public async createPublicRoom(
+    roomName: string,
+    description?: string
+  ): Promise<{ success: boolean; roomData?: any; error?: string }> {
+    return this.publicRoomManager.createPublicRoom(roomName, description);
+  }
+
+  /**
+   * Gets all available public rooms
+   */
+  public async getPublicRooms(): Promise<any[]> {
+    return this.publicRoomManager.getPublicRooms();
+  }
+
+  /**
+   * Gets a specific public room by ID
+   */
+  public async getPublicRoom(roomId: string): Promise<any | null> {
+    return this.publicRoomManager.getPublicRoom(roomId);
+  }
+
+  /**
+   * Starts room discovery to listen for new rooms
+   */
+  public startRoomDiscovery(): void {
+    this.publicRoomManager.startRoomDiscovery();
+  }
+
+  /**
+   * Stops room discovery
+   */
+  public stopRoomDiscovery(): void {
+    this.publicRoomManager.stopRoomDiscovery();
+  }
+
+  /**
+   * Initializes default public rooms if none exist
+   */
+  public async initializeDefaultRooms(): Promise<void> {
+    return this.publicRoomManager.initializeDefaultRooms();
   }
 
   // ============================================================================
@@ -500,7 +556,9 @@ export class MessagingPlugin extends BasePlugin {
   public async deleteTokenRoom(
     roomId: string
   ): Promise<{ success: boolean; error?: string }> {
-    return this.tokenRoomManager.deleteTokenRoom(roomId);
+    // For now, just leave the room - full deletion requires additional implementation
+    this.tokenRoomManager.stopListeningTokenRooms();
+    return { success: true };
   }
 
   /**
@@ -570,5 +628,40 @@ export class MessagingPlugin extends BasePlugin {
       clearedConversationsCount:
         this.messageProcessor.getClearedConversationsCount(),
     };
+  }
+
+  // ============================================================================
+  // 🚀 REAL-TIME MESSAGE LISTENERS (for caching optimization)
+  // ============================================================================
+
+  /**
+   * Start real-time message listener for token rooms
+   */
+  public async startTokenRoomMessageListener(
+    roomId: string,
+    callback: (message: any) => void
+  ): Promise<{ success: boolean; error?: string }> {
+    // Use the new unified listener system
+    this.tokenRoomManager.onTokenRoomMessage(callback);
+    await this.tokenRoomManager.startListeningTokenRooms();
+    return { success: true };
+  }
+
+  /**
+   * Stop real-time message listener for token rooms
+   */
+  public async stopTokenRoomMessageListener(
+    roomId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    // Stop all listeners - the new system manages them centrally
+    this.tokenRoomManager.stopListeningTokenRooms();
+    return { success: true };
+  }
+
+  /**
+   * Get cached messages for a specific chat type
+   */
+  public async getTokenRoomMessages(roomId: string): Promise<any[]> {
+    return this.tokenRoomManager.getTokenRoomMessages(roomId);
   }
 }

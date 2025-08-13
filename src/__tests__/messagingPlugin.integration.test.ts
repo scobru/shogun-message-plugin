@@ -234,7 +234,7 @@ describe("MessagingPlugin Integration", () => {
       const result = await messagingPlugin.sendTokenRoomMessage("room_123", "Hello", "");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("ID stanza, messaggio e token sono obbligatori");
+      expect(result.error).toContain("ID stanza, contenuto e token sono obbligatori");
     });
   });
 
