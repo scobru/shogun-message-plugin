@@ -7,7 +7,7 @@ function makeCoreMock() {
   const put = jest.fn((_data: any, cb: (ack: any) => void) => cb({}));
   const get = jest.fn(() => ({ get: jest.fn(() => ({ put })) }));
 
-  const user = { _?: { sea: currentUserPair } } as any;
+  const user = { _: { sea: currentUserPair } } as any;
 
   const sea = {
     sign: jest.fn(async (_data: string, _pair: any) => "signed"),
@@ -28,7 +28,13 @@ function makeCoreMock() {
   } as any;
 
   const core: any = {
-    db: { gun, user, sea, crypto },
+    db: {
+      gun,
+      user,
+      sea,
+      crypto,
+      getUserData: jest.fn().mockResolvedValue({}),
+    },
     isLoggedIn: () => true,
   };
 

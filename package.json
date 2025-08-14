@@ -1,7 +1,7 @@
 {
   "name": "shogun-message-plugin",
-  "version": "1.0.1",
-  "description": "Messaging Plugin for Shogun Core - Provides encrypted private messaging functionality",
+  "version": "4.7.0",
+  "description": "End-to-end encrypted messaging plugin for Shogun SDK",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/types/index.d.ts",

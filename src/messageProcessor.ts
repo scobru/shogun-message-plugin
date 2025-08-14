@@ -28,7 +28,7 @@ export class MessageProcessor {
   constructor(
     core: ShogunCore,
     encryptionManager: EncryptionManager,
-    groupManager: GroupManager
+    groupManager: GroupManager,
   ) {
     this.core = core;
     this.encryptionManager = encryptionManager;
@@ -60,9 +60,9 @@ export class MessageProcessor {
           messageData,
           messageId,
           currentUserPair,
-          currentUserPub
+          currentUserPub,
         );
-      }
+      },
     );
 
     // NOTE: Group message listeners are now managed at the app layer via addGroupListener
@@ -86,12 +86,19 @@ export class MessageProcessor {
         await this.processIncomingGroupMessage(
           messageData,
           messageId,
-          currentUserPair
+          currentUserPair,
         );
-      }
+      },
     );
 
     this.groupMessageListeners.set(groupId, listener);
+
+    // **FIX: Log when group listener is added for debugging**
+    console.log("🔍 addGroupListener: Added listener for group", groupId);
+    console.log(
+      "🔍 addGroupListener: Total group listeners:",
+      this.groupMessageListeners.size,
+    );
   }
 
   /**
@@ -105,6 +112,13 @@ export class MessageProcessor {
       } catch {}
     }
     this.groupMessageListeners.delete(groupId);
+  }
+
+  /**
+   * Checks if a specific group has an active listener
+   */
+  public hasGroupListener(groupId: string): boolean {
+    return this.groupMessageListeners.has(groupId);
   }
 
   /**
@@ -132,45 +146,82 @@ export class MessageProcessor {
   public async processIncomingGroupMessage(
     messageData: any,
     messageId: string,
-    currentUserPair: any
+    currentUserPair: any,
   ): Promise<void> {
+    console.log(
+      "🔍 processIncomingGroupMessage: Processing message",
+      messageId,
+    );
     try {
       const message = JSON.parse(messageData);
       const { from, content, timestamp, groupId, signature } = message;
       const currentUserPub = currentUserPair.pub;
 
+      console.log("🔍 processIncomingGroupMessage: Message details:", {
+        from,
+        groupId,
+        hasContent: !!content,
+        hasSignature: !!signature,
+      });
+
       // Do not ignore messages from the current user; UI needs them to replace temp messages
       if (!from || !groupId) {
+        console.log(
+          "🔍 processIncomingGroupMessage: Missing from or groupId, skipping",
+        );
         return;
       }
 
       if (this.processedMessageIds.has(messageId)) {
+        console.log(
+          "🔍 processIncomingGroupMessage: Message already processed, skipping",
+        );
         return;
       }
       this.processedMessageIds.set(messageId, Date.now());
+      console.log(
+        "🔍 processIncomingGroupMessage: Message marked as processed",
+      );
 
       const groupData = await this.groupManager.getGroupData(groupId);
       if (!groupData) {
+        console.log(
+          "🔍 processIncomingGroupMessage: Group data not found, skipping",
+        );
         this.processedMessageIds.delete(messageId);
         return;
       }
 
+      console.log(
+        "🔍 processIncomingGroupMessage: Group data found, proceeding with decryption",
+      );
+
       // Use the improved group key retrieval method
+      console.log("🔍 processIncomingGroupMessage: Getting group key for user");
       const groupKey = await this.groupManager.getGroupKeyForUser(
         groupData,
         currentUserPub,
-        currentUserPair
+        currentUserPair,
       );
 
       if (!groupKey) {
+        console.log("🔍 processIncomingGroupMessage: Failed to get group key");
         this.processedMessageIds.delete(messageId);
         return;
       }
+
+      console.log(
+        "🔍 processIncomingGroupMessage: Group key obtained, decrypting content",
+      );
 
       // Decrypt the message content using the group key
       const decryptedContent = await this.core.db.sea.decrypt(
         content,
-        groupKey
+        groupKey,
+      );
+
+      console.log(
+        "🔍 processIncomingGroupMessage: Content decrypted successfully",
       );
 
       // Ensure decrypted content is a string
@@ -186,12 +237,17 @@ export class MessageProcessor {
       }
 
       // **FIX: Verify signature against the DECRYPTED content**
+      console.log("🔍 processIncomingGroupMessage: Verifying signature");
       const isValid = await this.encryptionManager.verifyMessageSignature(
         finalDecryptedContent,
         signature,
-        from
+        from,
       );
+      console.log("🔍 processIncomingGroupMessage: Signature valid:", isValid);
       if (!isValid) {
+        console.log(
+          "🔍 processIncomingGroupMessage: Invalid signature, skipping",
+        );
         this.processedMessageIds.delete(messageId);
         return;
       }
@@ -205,9 +261,17 @@ export class MessageProcessor {
         signature,
       };
 
+      console.log(
+        "🔍 processIncomingGroupMessage: Notifying listeners, count:",
+        this.messageListeners.length +
+          this.groupMessageListenersInternal.length,
+      );
       this.messageListeners.forEach((callback) => callback(decryptedMessage));
       this.groupMessageListenersInternal.forEach((callback) =>
-        callback(decryptedMessage as any)
+        callback(decryptedMessage as any),
+      );
+      console.log(
+        "🔍 processIncomingGroupMessage: Message processing completed successfully",
       );
     } catch (error) {
       this.processedMessageIds.delete(messageId);
@@ -228,7 +292,7 @@ export class MessageProcessor {
     messageData: any,
     messageId: string,
     currentUserPair: any,
-    currentUserPub: string
+    currentUserPub: string,
   ): Promise<void> {
     // Validazione base
     if (
@@ -252,7 +316,7 @@ export class MessageProcessor {
       const decryptedMessage = await this.encryptionManager.decryptMessage(
         messageData.data,
         currentUserPair,
-        messageData.from
+        messageData.from,
       );
 
       // **FIX: Verify the signature on the decrypted message**
@@ -264,13 +328,13 @@ export class MessageProcessor {
             timestamp: decryptedMessage.timestamp,
             id: decryptedMessage.id,
           },
-          Object.keys({ content: "", timestamp: 0, id: "" }).sort()
+          Object.keys({ content: "", timestamp: 0, id: "" }).sort(),
         );
 
         const isValid = await this.encryptionManager.verifyMessageSignature(
           dataToVerify,
           decryptedMessage.signature,
-          decryptedMessage.from
+          decryptedMessage.from,
         );
 
         if (!isValid) {
@@ -324,7 +388,7 @@ export class MessageProcessor {
    * Clears all messages in a conversation with a specific recipient
    */
   public async clearConversation(
-    recipientPub: string
+    recipientPub: string,
   ): Promise<{ success: boolean; error?: string; clearedCount?: number }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
@@ -354,7 +418,7 @@ export class MessageProcessor {
       // Create a unique conversation identifier
       const conversationId = this.createConversationId(
         currentUserPub,
-        recipientPub
+        recipientPub,
       );
 
       // Mark this conversation as cleared
@@ -369,7 +433,7 @@ export class MessageProcessor {
         recipientSafePath,
         currentUserPub,
         recipientPub,
-        "recipient"
+        "recipient",
       );
       totalClearedCount += recipientClearedCount;
 
@@ -379,7 +443,7 @@ export class MessageProcessor {
         currentUserSafePath,
         recipientPub,
         currentUserPub,
-        "sender"
+        "sender",
       );
       totalClearedCount += currentUserClearedCount;
 
@@ -410,7 +474,7 @@ export class MessageProcessor {
     path: string,
     fromPub: string,
     toPub: string,
-    pathType: "sender" | "recipient"
+    pathType: "sender" | "recipient",
   ): Promise<number> {
     return new Promise<number>((resolve, reject) => {
       try {
@@ -426,7 +490,7 @@ export class MessageProcessor {
             clearTimeout(timeoutId);
             if (hasError) {
               reject(
-                new Error(`Errore durante la pulizia dei messaggi ${pathType}`)
+                new Error(`Errore durante la pulizia dei messaggi ${pathType}`),
               );
             } else {
               resolve(clearedCount);
@@ -444,7 +508,7 @@ export class MessageProcessor {
           // For sender path: messages received FROM the sender (from sender TO current user)
           const shouldClear = messageData && messageData.from === fromPub;
 
-                    if (shouldClear) {
+          if (shouldClear) {
             node.get(messageId).put(null, (ack: any) => {
               completedOperations++;
 
@@ -529,6 +593,13 @@ export class MessageProcessor {
    * Gets the number of group message listeners
    */
   public getGroupMessageListenersCount(): number {
-    return this.groupMessageListenersInternal.length;
+    return this.groupMessageListeners.size;
+  }
+
+  /**
+   * Checks if group listening is active
+   */
+  public isListeningGroups(): boolean {
+    return this.groupMessageListeners.size > 0;
   }
 }

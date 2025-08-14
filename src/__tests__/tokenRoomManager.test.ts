@@ -15,7 +15,7 @@ function makeCoreMock() {
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
     decrypt: jest.fn(
-      async (data: string, secret: string) => "decrypted_content"
+      async (data: string, secret: string) => "decrypted_content",
     ),
     verify: jest.fn(async (signature: string, pub: string) => "verified_data"),
   };
@@ -24,7 +24,7 @@ function makeCoreMock() {
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
     decrypt: jest.fn(
-      async (data: string, secret: string) => "decrypted_content"
+      async (data: string, secret: string) => "decrypted_content",
     ),
   };
 
@@ -94,6 +94,7 @@ function makeCoreMock() {
       putUserData: jest.fn(async (path: string, data: any) => {
         return Promise.resolve();
       }),
+      getUserData: jest.fn().mockResolvedValue({}),
     },
     isLoggedIn: () => true,
   };
@@ -105,10 +106,10 @@ function makeCoreMock() {
 function makeEncryptionManagerMock() {
   return {
     getRecipientEpub: jest.fn(
-      async (recipientPub: string) => "recipient_epub_key"
+      async (recipientPub: string) => "recipient_epub_key",
     ),
     verifyMessageSignature: jest.fn(
-      async (message: any, signature: string, senderPub: string) => true
+      async (message: any, signature: string, senderPub: string) => true,
     ),
     ensureUserEpubPublished: jest.fn(async () => true),
     getCurrentUserEpub: jest.fn(() => "current_user_epub_key"),
@@ -138,7 +139,7 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.createTokenRoom(
         roomName,
         description,
-        maxParticipants
+        maxParticipants,
       );
 
       expect(result.success).toBe(true);
@@ -212,7 +213,7 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
         messageContent,
-        token
+        token,
       );
 
       expect(result.success).toBe(true);
@@ -225,7 +226,7 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
         "Hello",
-        "token"
+        "token",
       );
 
       expect(result.success).toBe(false);
@@ -236,12 +237,12 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
         "Hello",
-        ""
+        "",
       );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        "ID stanza, contenuto e token sono obbligatori"
+        "ID stanza, contenuto e token sono obbligatori",
       );
     });
 
@@ -249,12 +250,12 @@ describe("TokenRoomManager", () => {
       const result = await tokenRoomManager.sendTokenRoomMessage(
         "room_123",
         "",
-        "shared_token_123"
+        "shared_token_123",
       );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        "ID stanza, contenuto e token sono obbligatori"
+        "ID stanza, contenuto e token sono obbligatori",
       );
     });
   });
@@ -317,7 +318,7 @@ describe("TokenRoomManager", () => {
     test("should join token room successfully", async () => {
       const result = await tokenRoomManager.joinTokenRoom(
         "room_123",
-        "shared_token_123"
+        "shared_token_123",
       );
 
       expect(result.success).toBe(true);
@@ -331,11 +332,11 @@ describe("TokenRoomManager", () => {
 
       const result = await tokenRoomManager.joinTokenRoom(
         "nonexistent_room",
-        "token"
+        "token",
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Stanza non trovata o token non valido");
+      expect(result.error).toContain("Stanza non trovata.");
     });
 
     test("should fail when token is empty", async () => {

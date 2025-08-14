@@ -37,7 +37,7 @@ export class PublicRoomManager {
    */
   public async createPublicRoom(
     roomName: string,
-    description?: string
+    description?: string,
   ): Promise<{ success: boolean; roomData?: PublicRoomData; error?: string }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
@@ -208,7 +208,7 @@ export class PublicRoomManager {
    */
   private async updateRoomMetadata(
     roomId: string,
-    updates: Partial<PublicRoomData>
+    updates: Partial<PublicRoomData>,
   ): Promise<void> {
     if (!this.core.isLoggedIn()) return;
 
@@ -244,7 +244,7 @@ export class PublicRoomManager {
    */
   public async sendPublicMessage(
     roomId: string,
-    messageContent: string
+    messageContent: string,
   ): Promise<MessageResponse> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
@@ -294,7 +294,7 @@ export class PublicRoomManager {
       // Firma il messaggio per autenticità
       const signature = await this.core.db.sea.sign(
         messageContent,
-        currentUserPair
+        currentUserPair,
       );
 
       // Aggiungi la firma al messaggio
@@ -353,9 +353,9 @@ export class PublicRoomManager {
           messageData,
           messageId,
           currentUserPub,
-          roomId
+          roomId,
         );
-      }
+      },
     );
   }
 
@@ -391,7 +391,7 @@ export class PublicRoomManager {
     messageData: any,
     messageId: string,
     currentUserPub: string,
-    roomId: string
+    roomId: string,
   ): Promise<void> {
     // Validazione base
     if (
@@ -417,7 +417,7 @@ export class PublicRoomManager {
         const isValid = await this.encryptionManager.verifyMessageSignature(
           messageData.content,
           messageData.signature,
-          messageData.from
+          messageData.from,
         );
         if (!isValid) {
           this.processedPublicMessageIds.delete(messageId);
@@ -462,12 +462,12 @@ export class PublicRoomManager {
     // Limit size of map
     if (this.processedPublicMessageIds.size > this.MAX_PROCESSED_MESSAGES) {
       const sortedEntries = Array.from(
-        this.processedPublicMessageIds.entries()
+        this.processedPublicMessageIds.entries(),
       ).sort(([, a], [, b]) => a - b);
 
       const toRemove = sortedEntries.slice(
         0,
-        this.processedPublicMessageIds.size - this.MAX_PROCESSED_MESSAGES
+        this.processedPublicMessageIds.size - this.MAX_PROCESSED_MESSAGES,
       );
       toRemove.forEach(([id]) => this.processedPublicMessageIds.delete(id));
     }
@@ -480,7 +480,7 @@ export class PublicRoomManager {
     path: string,
     messageId: string,
     messageData: any,
-    type: "private" | "public" | "group"
+    type: "private" | "public" | "group",
   ): Promise<void> {
     let safePath: string;
 
@@ -587,7 +587,7 @@ export class PublicRoomManager {
           } catch (error) {
             console.error(
               `❌ Failed to create default room ${room.name}:`,
-              error
+              error,
             );
           }
         }

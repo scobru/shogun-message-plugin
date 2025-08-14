@@ -85,7 +85,7 @@ describe("BasePlugin", () => {
 
     test("should throw when not initialized", () => {
       expect(() => (plugin as any).assertInitialized()).toThrow(
-        "Plugin test-plugin is not initialized"
+        "Plugin test-plugin is not initialized",
       );
     });
 
@@ -94,7 +94,7 @@ describe("BasePlugin", () => {
       plugin.destroy();
 
       expect(() => (plugin as any).assertInitialized()).toThrow(
-        "Plugin test-plugin is not initialized"
+        "Plugin test-plugin is not initialized",
       );
     });
   });
@@ -110,7 +110,7 @@ describe("BasePlugin", () => {
 
     test("should have correct description", () => {
       expect(plugin.description).toBe(
-        "Test plugin for testing BasePlugin functionality"
+        "Test plugin for testing BasePlugin functionality",
       );
     });
 

@@ -75,7 +75,7 @@ describe("utils", () => {
     (global as any).window = { location: { origin: "http://localhost" } };
     const url = generateInviteLink("public", "room-1", "Lobby", "tok123");
     expect(url).toBe(
-      "http://localhost/chat-invite/public/room-1?name=Lobby&token=tok123"
+      "http://localhost/chat-invite/public/room-1?name=Lobby&token=tok123",
     );
   });
 

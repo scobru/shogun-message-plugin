@@ -148,7 +148,7 @@ describe("Types", () => {
       expect(tokenRoomData.createdBy).toBe("creator_pub_key");
       expect(tokenRoomData.createdAt).toBeGreaterThan(0);
       expect(tokenRoomData.description).toBe(
-        "A private room for sensitive discussions"
+        "A private room for sensitive discussions",
       );
       expect(tokenRoomData.maxParticipants).toBe(50);
     });
@@ -407,7 +407,7 @@ describe("Types", () => {
 
     test("should create valid PublicMessageListener", () => {
       const publicMessageListener: PublicMessageListener = (
-        message: PublicMessage
+        message: PublicMessage,
       ) => {
         console.log("Received public message:", message.content);
       };
@@ -417,7 +417,7 @@ describe("Types", () => {
 
     test("should create valid GroupMessageListener", () => {
       const groupMessageListener: GroupMessageListener = (
-        message: GroupMessage
+        message: GroupMessage,
       ) => {
         console.log("Received group message:", message.content);
       };
@@ -427,7 +427,7 @@ describe("Types", () => {
 
     test("should create valid TokenRoomMessageListener", () => {
       const tokenRoomMessageListener: TokenRoomMessageListener = (
-        message: TokenRoomMessage
+        message: TokenRoomMessage,
       ) => {
         console.log("Received token room message:", message.content);
       };

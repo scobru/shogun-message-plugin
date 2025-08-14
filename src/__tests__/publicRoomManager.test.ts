@@ -4,73 +4,86 @@ import { PublicMessage } from "../types";
 
 // Mock ShogunCore for testing
 function makeCoreMock() {
-  const currentUserPair = { 
-    pub: "user_pub_key_123", 
+  const currentUserPair = {
+    pub: "user_pub_key_123",
     epub: "user_epub_key_456",
-    alias: "PublicUser"
+    alias: "PublicUser",
   };
 
   const sea = {
     sign: jest.fn(async (data: string, pair: any) => "signed_data"),
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => "decrypted_content"),
+    decrypt: jest.fn(
+      async (data: string, secret: string) => "decrypted_content"
+    ),
     verify: jest.fn(async (signature: string, pub: string) => "verified_data"),
   };
 
   const crypto = {
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => "decrypted_content"),
+    decrypt: jest.fn(
+      async (data: string, secret: string) => "decrypted_content"
+    ),
   };
 
   // Create a mock that supports chained .get() calls
   const createMockGunNode = () => {
     const node = {
       put: jest.fn((data: any, callback?: any) => {
-        if (callback && typeof callback === 'function') {
+        if (callback && typeof callback === "function") {
           callback({});
         }
         return node;
       }),
-      get: jest.fn(() => node),
+      get: jest.fn(() => node), // Return the same node to support chaining
       map: jest.fn(() => ({
         on: jest.fn((callback: any) => {
           // Simulate incoming message
-          if (callback && typeof callback === 'function') {
+          if (callback && typeof callback === "function") {
             setTimeout(() => {
-              callback({
-                from: "sender_pub_key",
-                content: "Hello everyone!",
-                timestamp: Date.now(),
-                id: "msg_123",
-                roomId: "general",
-                signature: "signed_data"
-              }, "msg_123");
+              callback(
+                {
+                  from: "sender_pub_key",
+                  content: "Hello everyone!",
+                  timestamp: Date.now(),
+                  id: "msg_123",
+                  roomId: "general",
+                  signature: "signed_data",
+                },
+                "msg_123"
+              );
             }, 0);
           }
           return { off: jest.fn() };
         }),
-        once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
+        once: jest.fn((callback: any) => callback({ epub: "sender_epub" })),
       })),
-      once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
+      once: jest.fn((callback: any) => callback({ epub: "sender_epub" })),
     };
     return node;
   };
 
   const gun = {
     get: jest.fn(() => createMockGunNode()),
-    user: jest.fn(() => ({ 
-      get: jest.fn(() => ({ 
-        once: jest.fn((callback: any) => callback({ epub: "sender_epub" }))
-      }))
+    user: jest.fn(() => ({
+      get: jest.fn(() => ({
+        once: jest.fn((callback: any) => callback({ epub: "sender_epub" })),
+      })),
     })),
   };
 
-  const user = { _?: { sea: currentUserPair } } as any;
+  const user = { _: { sea: currentUserPair } } as any;
 
   const core: any = {
-    db: { gun, user, sea, crypto },
+    db: {
+      gun,
+      user,
+      sea,
+      crypto,
+      getUserData: jest.fn().mockResolvedValue({}),
+    },
     isLoggedIn: () => true,
   };
 
@@ -102,17 +115,26 @@ describe("PublicRoomManager", () => {
       const roomId = "general";
       const messageContent = "Hello everyone in the public room!";
 
-      const result = await publicRoomManager.sendPublicMessage(roomId, messageContent);
+      const result = await publicRoomManager.sendPublicMessage(
+        roomId,
+        messageContent
+      );
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
-      expect(mockCore.db.sea.sign).toHaveBeenCalledWith(messageContent, expect.any(Object));
+      expect(mockCore.db.sea.sign).toHaveBeenCalledWith(
+        messageContent,
+        expect.any(Object)
+      );
     });
 
     test("should fail when user is not logged in", async () => {
       mockCore.isLoggedIn = () => false;
 
-      const result = await publicRoomManager.sendPublicMessage("general", "Hello");
+      const result = await publicRoomManager.sendPublicMessage(
+        "general",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Devi essere loggato");
@@ -121,7 +143,10 @@ describe("PublicRoomManager", () => {
     test("should fail when user pair is not available", async () => {
       mockCore.db.user = { _: {} }; // No sea property
 
-      const result = await publicRoomManager.sendPublicMessage("general", "Hello");
+      const result = await publicRoomManager.sendPublicMessage(
+        "general",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Coppia di chiavi utente non disponibile");
@@ -131,22 +156,31 @@ describe("PublicRoomManager", () => {
       const result = await publicRoomManager.sendPublicMessage("", "Hello");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("ID stanza e messaggio sono obbligatori e devono essere stringhe valide.");
+      expect(result.error).toContain(
+        "ID stanza e messaggio sono obbligatori e devono essere stringhe valide."
+      );
     });
 
     test("should fail when message content is empty", async () => {
       const result = await publicRoomManager.sendPublicMessage("general", "");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("ID stanza e messaggio sono obbligatori e devono essere stringhe valide.");
+      expect(result.error).toContain(
+        "ID stanza e messaggio sono obbligatori e devono essere stringhe valide."
+      );
     });
 
     test("should handle network errors gracefully", async () => {
       mockCore.db.gun.get = jest.fn(() => ({
-        put: jest.fn((data: any, callback: any) => callback({ err: "Network error" }))
+        put: jest.fn((data: any, callback: any) =>
+          callback({ err: "Network error" })
+        ),
       }));
 
-      const result = await publicRoomManager.sendPublicMessage("general", "Hello");
+      const result = await publicRoomManager.sendPublicMessage(
+        "general",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("messageNode.get is not a function");
@@ -200,7 +234,7 @@ describe("PublicRoomManager", () => {
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -229,7 +263,7 @@ describe("PublicRoomManager", () => {
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -254,7 +288,7 @@ describe("PublicRoomManager", () => {
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -305,7 +339,7 @@ describe("PublicRoomManager", () => {
         // Missing content
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       });
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -330,7 +364,7 @@ describe("PublicRoomManager", () => {
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -354,14 +388,16 @@ describe("PublicRoomManager", () => {
     });
 
     test("should ignore message with invalid signature", async () => {
-      mockEncryptionManager.verifyMessageSignature = jest.fn().mockResolvedValue(false);
+      mockEncryptionManager.verifyMessageSignature = jest
+        .fn()
+        .mockResolvedValue(false);
 
       const messageData = {
         from: "sender_pub_key",
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
       const messageId = "msg_123";
       const currentUserPub = "user_pub_key_123";
@@ -384,9 +420,9 @@ describe("PublicRoomManager", () => {
   describe("onPublicMessage", () => {
     test("should register public message callback", () => {
       const callback = jest.fn();
-      
+
       publicRoomManager.onPublicMessage(callback);
-      
+
       expect(publicRoomManager.getPublicMessageListenersCount()).toBe(1);
     });
 
@@ -394,7 +430,7 @@ describe("PublicRoomManager", () => {
       publicRoomManager.onPublicMessage(null as any);
       publicRoomManager.onPublicMessage(undefined as any);
       publicRoomManager.onPublicMessage("not_a_function" as any);
-      
+
       expect(publicRoomManager.getPublicMessageListenersCount()).toBe(0);
     });
   });
@@ -402,17 +438,17 @@ describe("PublicRoomManager", () => {
   describe("removePublicMessageListener", () => {
     test("should remove public message listener", () => {
       const callback = jest.fn();
-      
+
       publicRoomManager.onPublicMessage(callback);
       expect(publicRoomManager.getPublicMessageListenersCount()).toBe(1);
-      
+
       publicRoomManager.removePublicMessageListener(callback);
       expect(publicRoomManager.getPublicMessageListenersCount()).toBe(0);
     });
 
     test("should handle removal of non-existent listener", () => {
       const callback = jest.fn();
-      
+
       publicRoomManager.removePublicMessageListener(callback);
       // Should not throw error
     });
@@ -436,9 +472,9 @@ describe("PublicRoomManager", () => {
     test("should cleanup expired message IDs", () => {
       // This is a private method, but we can test its effects
       // by checking that processed message count doesn't grow indefinitely
-      
+
       const initialCount = publicRoomManager.getProcessedPublicMessagesCount();
-      
+
       // Simulate processing many messages
       for (let i = 0; i < 100; i++) {
         const messageData = JSON.stringify({
@@ -446,9 +482,9 @@ describe("PublicRoomManager", () => {
           content: `Message ${i}`,
           timestamp: Date.now(),
           roomId: "general",
-          signature: "signed_data"
+          signature: "signed_data",
         });
-        
+
         (publicRoomManager as any).processIncomingPublicMessage(
           messageData,
           `msg_${i}`,
@@ -456,7 +492,7 @@ describe("PublicRoomManager", () => {
           "general"
         );
       }
-      
+
       // The cleanup should prevent unlimited growth
       const finalCount = publicRoomManager.getProcessedPublicMessagesCount();
       expect(finalCount).toBeLessThanOrEqual(1000); // MAX_PROCESSED_MESSAGES
@@ -472,7 +508,7 @@ describe("PublicRoomManager", () => {
         content: "Hello everyone!",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
 
       await (publicRoomManager as any).sendToGunDB(
@@ -486,31 +522,41 @@ describe("PublicRoomManager", () => {
     });
 
     test("should handle GunDB errors", async () => {
-      mockCore.db.gun.get = jest.fn(() => ({
-        put: jest.fn((data: any, callback: any) => callback({ err: "GunDB error" }))
-      }));
+      // Create a proper mock that handles the get() method correctly
+      const mockNode = {
+        put: jest.fn((data: any, callback: any) => {
+          if (callback && typeof callback === "function") {
+            callback({ err: "GunDB error" });
+          }
+        }),
+        get: jest.fn(() => mockNode), // Return the same node to support chaining
+      };
+
+      mockCore.db.gun.get = jest.fn(() => mockNode);
 
       const path = "room_general";
       const messageId = "msg_123";
       const messageData = { test: "data" };
 
-      await expect((publicRoomManager as any).sendToGunDB(
-        path,
-        messageId,
-        messageData,
-        "public"
-      )).rejects.toThrow("messageNode.get is not a function");
+      await expect(
+        (publicRoomManager as any).sendToGunDB(
+          path,
+          messageId,
+          messageData,
+          "public"
+        )
+      ).rejects.toThrow("GunDB error");
     });
 
     test("should handle missing GunDB", async () => {
-      const invalidManager = new PublicRoomManager({ db: {} }, mockEncryptionManager);
-      
-      await expect((invalidManager as any).sendToGunDB(
-        "path",
-        "msg_id",
-        {},
-        "public"
-      )).rejects.toThrow("Cannot read properties of undefined (reading 'get')");
+      const invalidManager = new PublicRoomManager(
+        { db: {} },
+        mockEncryptionManager
+      );
+
+      await expect(
+        (invalidManager as any).sendToGunDB("path", "msg_id", {}, "public")
+      ).rejects.toThrow("Cannot read properties of undefined (reading 'get')");
     });
   });
 
@@ -520,7 +566,10 @@ describe("PublicRoomManager", () => {
       const messageContent = "Hello everyone!";
 
       // 1. Send a public message
-      const sendResult = await publicRoomManager.sendPublicMessage(roomId, messageContent);
+      const sendResult = await publicRoomManager.sendPublicMessage(
+        roomId,
+        messageContent
+      );
       expect(sendResult.success).toBe(true);
 
       // 2. Start listening to the room
@@ -538,7 +587,7 @@ describe("PublicRoomManager", () => {
         content: "Response message",
         timestamp: Date.now(),
         roomId: "general",
-        signature: "signed_data"
+        signature: "signed_data",
       };
 
       await (publicRoomManager as any).processIncomingPublicMessage(

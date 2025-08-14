@@ -67,7 +67,7 @@ export class TokenRoomManager {
   constructor(
     core: ShogunCore,
     encryptionManager: EncryptionManager,
-    options: TokenRoomManagerOptions = {}
+    options: TokenRoomManagerOptions = {},
   ) {
     this.core = core;
     this.encryptionManager = encryptionManager;
@@ -102,9 +102,11 @@ export class TokenRoomManager {
       // Clear any existing state
       this._resetState();
 
-      // No need to load rooms from user profile - UI handles persistence
+      // **FIX: Load active rooms from persistence**
+      await this._loadActiveRoomsFromPersistence();
+
       console.log(
-        "🔍 TokenRoomManager initialized - UI handles room persistence"
+        "🔍 TokenRoomManager initialized - Loaded active rooms from persistence",
       );
 
       this._isInitialized = true;
@@ -117,6 +119,97 @@ export class TokenRoomManager {
       throw error;
     } finally {
       this._initializationPromise = null;
+    }
+  }
+
+  /**
+   * Load active token rooms from user profile persistence
+   */
+  private async _loadActiveRoomsFromPersistence(): Promise<void> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      console.log(
+        "🔍 _loadActiveRoomsFromPersistence: User not logged in, skipping",
+      );
+      return;
+    }
+
+    try {
+      console.log(
+        "🔍 _loadActiveRoomsFromPersistence: Loading active rooms from persistence",
+      );
+
+      // Get all token room references from user profile
+      const userData = await this.core.db.getUserData("chats/token");
+      if (!userData) {
+        console.log(
+          "🔍 _loadActiveRoomsFromPersistence: No token room data found",
+        );
+        return;
+      }
+
+      console.log(
+        "🔍 _loadActiveRoomsFromPersistence: Found token room data:",
+        userData,
+      );
+
+      // Load each room reference
+      for (const [roomId, roomReference] of Object.entries(userData)) {
+        if (
+          roomReference &&
+          typeof roomReference === "object" &&
+          "type" in roomReference
+        ) {
+          const ref = roomReference as any;
+          if (ref.type === "token" && ref.id && ref.name) {
+            console.log("🔍 _loadActiveRoomsFromPersistence: Loading room:", {
+              roomId,
+              roomName: ref.name,
+              joinedAt: ref.joinedAt,
+            });
+
+            // Get the room data to verify it exists and get the token
+            const roomData = await this.getTokenRoomData(ref.id);
+            if (roomData) {
+              // Add to active rooms
+              this.activeTokenRooms.set(ref.id, roomData.token);
+              this.roomStates.set(ref.id, {
+                messageCount: 0,
+                lastMessageId: undefined,
+                lastSync: Date.now(),
+                isJoined: true,
+              });
+              console.log(
+                "🔍 _loadActiveRoomsFromPersistence: Successfully loaded room:",
+                ref.id,
+              );
+            } else {
+              console.warn(
+                "🔍 _loadActiveRoomsFromPersistence: Room data not found for:",
+                ref.id,
+              );
+            }
+          }
+        }
+      }
+
+      console.log(
+        "🔍 _loadActiveRoomsFromPersistence: Loaded",
+        this.activeTokenRooms.size,
+        "active rooms",
+      );
+
+      // **FIX: Automatically start listening to loaded rooms**
+      if (this.activeTokenRooms.size > 0) {
+        console.log(
+          "🔍 _loadActiveRoomsFromPersistence: Starting listeners for loaded rooms",
+        );
+        await this.startListeningTokenRooms();
+      }
+    } catch (error) {
+      console.error(
+        "🔍 _loadActiveRoomsFromPersistence: Error loading active rooms:",
+        error,
+      );
     }
   }
 
@@ -135,7 +228,7 @@ export class TokenRoomManager {
    */
   public async joinTokenRoom(
     roomId: string,
-    token: string
+    token: string,
   ): Promise<{ success: boolean; roomData?: TokenRoomData; error?: string }> {
     // Ensure initialization
     await this.initialize();
@@ -143,7 +236,7 @@ export class TokenRoomManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per unirti a una stanza token.",
+        error: "Devi essere loggato per unirti a una stanza.",
       };
     }
 
@@ -157,29 +250,40 @@ export class TokenRoomManager {
     try {
       this.emitStatus({ type: "room:join:start", roomId });
 
-      // **STEP 2.1: Validate room exists**
+      // **STEP 1: Get room data**
       const roomData = await this.getTokenRoomData(roomId);
       if (!roomData) {
         return {
           success: false,
-          error: "Stanza non trovata o token non valido.",
+          error: "Stanza non trovata.",
         };
       }
 
-      // **STEP 2.2: Add to active rooms**
-      this.activeTokenRooms.set(roomId, token);
-      this.roomStates.set(roomId, {
-        isJoined: true,
-        messageCount: 0,
-        lastSync: Date.now(),
-      });
-
-      // **STEP 2.3: Start listening if manager is active**
-      if (this._isListeningTokenRooms) {
-        await this._startListeningToRoom(roomId, token);
+      // **STEP 2: Verify token**
+      if (roomData.token !== token) {
+        return {
+          success: false,
+          error: "Token non valido per questa stanza.",
+        };
       }
 
+      // **STEP 3: Add to active rooms**
+      this.activeTokenRooms.set(roomId, token);
+      this.roomStates.set(roomId, {
+        messageCount: 0,
+        lastMessageId: undefined,
+        lastSync: Date.now(),
+        isJoined: true,
+      });
+
+      // **FIX: Automatically start listening to this room**
+      await this._startListeningToRoom(roomId, token);
+
+      // **STEP 4: Store room reference in user profile**
+      await this._storeRoomReference(roomId, roomData.name);
+
       this.emitStatus({ type: "room:join:success", roomId });
+      console.log("🔍 joinTokenRoom: Successfully joined room", roomId);
       return { success: true, roomData };
     } catch (error) {
       this.emitStatus({
@@ -188,6 +292,44 @@ export class TokenRoomManager {
         error: String(error),
       });
       return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Store room reference in user profile for persistence
+   */
+  private async _storeRoomReference(
+    roomId: string,
+    roomName: string,
+  ): Promise<void> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return;
+    }
+
+    try {
+      const roomReference = {
+        type: "token",
+        id: roomId,
+        name: roomName,
+        joinedAt: Date.now(),
+      };
+
+      console.log("🔍 _storeRoomReference: Storing room reference:", {
+        roomId,
+        roomName,
+      });
+      console.log(
+        "🔍 _storeRoomReference: Room reference data:",
+        roomReference,
+      );
+
+      await this.core.db.putUserData(`chats/token/${roomId}`, roomReference);
+      console.log("🔍 _storeRoomReference: Room reference stored successfully");
+    } catch (error) {
+      console.error(
+        "🔍 _storeRoomReference: Error storing room reference:",
+        error,
+      );
     }
   }
 
@@ -232,7 +374,7 @@ export class TokenRoomManager {
   public async sendTokenRoomMessage(
     roomId: string,
     messageContent: string,
-    token: string
+    token: string,
   ): Promise<MessageResponse> {
     // Ensure initialization
     await this.initialize();
@@ -270,7 +412,7 @@ export class TokenRoomManager {
       // **STEP 4.2: Encrypt message content**
       const encryptedContent = await this.core.db.sea.encrypt(
         messageContent,
-        token
+        token,
       );
 
       if (!encryptedContent) {
@@ -293,7 +435,7 @@ export class TokenRoomManager {
       const messagesPath = `tokenRoom_${roomId}_messages`;
       console.log(
         "🔍 sendTokenRoomMessage: Sending to GunDB path",
-        messagesPath
+        messagesPath,
       );
       console.log("🔍 sendTokenRoomMessage: Message data", {
         messageId,
@@ -304,15 +446,31 @@ export class TokenRoomManager {
       });
       console.log(
         "🔍 sendTokenRoomMessage: Active rooms for listening:",
-        Array.from(this.activeTokenRooms.keys())
+        Array.from(this.activeTokenRooms.keys()),
       );
       console.log(
         "🔍 sendTokenRoomMessage: Is listening:",
-        this._isListeningTokenRooms
+        this._isListeningTokenRooms,
+      );
+      console.log(
+        "🔍 sendTokenRoomMessage: Room message handlers count:",
+        this.roomMessageHandlers.size,
+      );
+      console.log(
+        "🔍 sendTokenRoomMessage: Has handler for this room:",
+        this.roomMessageHandlers.has(roomId),
+      );
+      console.log(
+        "🔍 sendTokenRoomMessage: Room state:",
+        this.roomStates.get(roomId),
       );
 
       await this._sendToGunDB(messagesPath, messageId, messageData, "token");
-      console.log("🔍 sendTokenRoomMessage: Successfully sent to GunDB");
+      console.log("🔍 sendTokenRoomMessage: Successfully sent to GunDB", {
+        path: messagesPath,
+        messageId,
+        timestamp: new Date().toISOString(),
+      });
 
       // **STEP 4.5: Track sent message**
       this.sentMessageIds.add(messageId);
@@ -354,7 +512,7 @@ export class TokenRoomManager {
       limit?: number;
       before?: string;
       after?: string;
-    } = {}
+    } = {},
   ): Promise<TokenRoomMessage[]> {
     // Ensure initialization
     await this.initialize();
@@ -374,7 +532,7 @@ export class TokenRoomManager {
       const messages = await this._fetchMessagesFromGunDB(
         messagesNode,
         limit,
-        options
+        options,
       );
 
       // **STEP 5.2: Decrypt and process messages**
@@ -418,14 +576,14 @@ export class TokenRoomManager {
 
   private async _startListeningToRoom(
     roomId: string,
-    token: string
+    token: string,
   ): Promise<void> {
     console.log("🔍 _startListeningToRoom: Starting for room", roomId);
 
     if (this.roomMessageHandlers.has(roomId)) {
       console.log(
         "🔍 _startListeningToRoom: Already listening to room",
-        roomId
+        roomId,
       );
       return; // Already listening
     }
@@ -434,7 +592,12 @@ export class TokenRoomManager {
     console.log("🔍 _startListeningToRoom: Using path", messagesPath);
 
     const roomMessagesNode = this.core.db.gun.get(messagesPath).map();
+    console.log(
+      "🔍 _startListeningToRoom: Created GunDB node for path",
+      messagesPath,
+    );
 
+    console.log("🔍 _startListeningToRoom: Setting up GunDB on listener");
     const handler = roomMessagesNode.on(
       async (messageData: any, messageId: string) => {
         console.log("🔍 _startListeningToRoom: GunDB callback triggered", {
@@ -445,20 +608,44 @@ export class TokenRoomManager {
           messageDataContent: messageData?.content ? "present" : "missing",
           messageDataFrom: messageData?.from ? "present" : "missing",
           messageDataRoomId: messageData?.roomId,
+          timestamp: new Date().toISOString(),
         });
+
+        if (!messageData) {
+          console.log("🔍 _startListeningToRoom: No message data, skipping");
+          return;
+        }
+
         await this._processIncomingMessage(
           messageData,
           messageId,
           token,
-          roomId
+          roomId,
         );
-      }
+      },
+    );
+    console.log(
+      "🔍 _startListeningToRoom: GunDB listener handler created",
+      handler,
     );
 
     this.roomMessageHandlers.set(roomId, handler);
+    console.log("🔍 _startListeningToRoom: Handler stored for room", roomId);
+    console.log(
+      "🔍 _startListeningToRoom: Total handlers stored:",
+      this.roomMessageHandlers.size,
+    );
+
+    // **FIX: Set global listening flag when any room listener is started**
+    this._isListeningTokenRooms = true;
+
     console.log(
       "🔍 _startListeningToRoom: Successfully set up listener for room",
-      roomId
+      roomId,
+    );
+    console.log(
+      "🔍 _startListeningToRoom: Global listening flag set to:",
+      this._isListeningTokenRooms,
     );
     this.emitStatus({ type: "listeners:room:started", roomId });
   }
@@ -467,7 +654,7 @@ export class TokenRoomManager {
     messageData: any,
     messageId: string,
     token: string,
-    roomId: string
+    roomId: string,
   ): Promise<void> {
     console.log("🔍 _processIncomingMessage: Starting processing", {
       messageId,
@@ -488,39 +675,52 @@ export class TokenRoomManager {
         hasFrom: !!messageData?.from,
         messageRoomId: messageData?.roomId,
         expectedRoomId: roomId,
+        messageData: messageData,
       });
       return;
     }
+
+    console.log(
+      "🔍 _processIncomingMessage: Validation passed, processing message",
+    );
 
     // **DUPLICATE DETECTION**
     const messageKey = `${roomId}:${messageId}`;
     if (this.processedMessageKeys.has(messageKey)) {
       console.log(
         "🔍 _processIncomingMessage: Duplicate message detected",
-        messageKey
+        messageKey,
       );
       return;
     }
+
+    console.log("🔍 _processIncomingMessage: Not a duplicate, continuing");
 
     // **SELF-SENT DETECTION**
     if (this.sentMessageIds.has(messageId)) {
       console.log(
         "🔍 _processIncomingMessage: Self-sent message detected",
-        messageId
+        messageId,
       );
       return;
     }
 
+    console.log("🔍 _processIncomingMessage: Not self-sent, continuing");
+
     // **MARK AS PROCESSED**
     this.processedMessageKeys.add(messageKey);
     this.processedMessageIds.set(messageId, Date.now());
+    console.log(
+      "🔍 _processIncomingMessage: Message marked as processed",
+      messageKey,
+    );
 
     try {
       console.log("🔍 _processIncomingMessage: Attempting to decrypt message");
       // **DECRYPT MESSAGE**
       const decryptedContent = await this.core.db.sea.decrypt(
         messageData.content,
-        token
+        token,
       );
 
       if (!decryptedContent) {
@@ -532,7 +732,10 @@ export class TokenRoomManager {
 
       // **CREATE MESSAGE OBJECT**
       const decryptedMessage: TokenRoomMessage = {
-        ...messageData,
+        id: messageId,
+        from: messageData.from,
+        roomId,
+        timestamp: messageData.timestamp || Date.now(),
         content:
           typeof decryptedContent === "string"
             ? decryptedContent
@@ -544,15 +747,30 @@ export class TokenRoomManager {
         roomId: decryptedMessage.roomId,
         content: decryptedMessage.content.substring(0, 50) + "...",
         from: decryptedMessage.from,
+        timestamp: new Date().toISOString(),
       });
 
       // **NOTIFY LISTENERS**
       console.log("🔍 _processIncomingMessage: Notifying listeners", {
         listenerCount: this.tokenRoomListeners.length,
+        messageId: decryptedMessage.id,
+        roomId: decryptedMessage.roomId,
+        timestamp: new Date().toISOString(),
       });
-      this.tokenRoomListeners.forEach((callback) => {
+
+      if (this.tokenRoomListeners.length === 0) {
+        console.warn("🔍 _processIncomingMessage: No listeners registered!");
+      }
+
+      this.tokenRoomListeners.forEach((callback, index) => {
         try {
+          console.log(
+            `🔍 _processIncomingMessage: Calling listener ${index + 1}/${this.tokenRoomListeners.length}`,
+          );
           callback(decryptedMessage);
+          console.log(
+            `🔍 _processIncomingMessage: Listener ${index + 1} completed successfully`,
+          );
         } catch (error) {
           console.error("🔍 _processIncomingMessage: Listener error", error);
         }
@@ -568,10 +786,20 @@ export class TokenRoomManager {
 
       this.emitStatus({ type: "message:received", roomId, messageId });
       console.log(
-        "🔍 _processIncomingMessage: Processing completed successfully"
+        "🔍 _processIncomingMessage: Processing completed successfully",
+        {
+          messageId,
+          roomId,
+          timestamp: new Date().toISOString(),
+        },
       );
     } catch (error) {
-      console.error("🔍 _processIncomingMessage: Processing error", error);
+      console.error("🔍 _processIncomingMessage: Processing error", {
+        error: String(error),
+        messageId,
+        roomId,
+        timestamp: new Date().toISOString(),
+      });
       // Remove from processed if decryption failed
       this.processedMessageKeys.delete(messageKey);
       this.processedMessageIds.delete(messageId);
@@ -587,7 +815,7 @@ export class TokenRoomManager {
   private async _fetchMessagesFromGunDB(
     messagesNode: any,
     limit: number,
-    options: { before?: string; after?: string }
+    options: { before?: string; after?: string },
   ): Promise<any[]> {
     console.log("🔍 _fetchMessagesFromGunDB: Starting fetch", {
       limit,
@@ -637,7 +865,7 @@ export class TokenRoomManager {
 
   private async _decryptMessages(
     messages: any[],
-    token: string
+    token: string,
   ): Promise<TokenRoomMessage[]> {
     const decryptedMessages: TokenRoomMessage[] = [];
 
@@ -645,7 +873,7 @@ export class TokenRoomManager {
       try {
         const decryptedContent = await this.core.db.sea.decrypt(
           message.content,
-          token
+          token,
         );
 
         if (decryptedContent) {
@@ -691,23 +919,40 @@ export class TokenRoomManager {
     path: string,
     messageId: string,
     messageData: any,
-    type: "private" | "public" | "group" | "token"
+    type: "private" | "public" | "group" | "token",
   ): Promise<void> {
+    console.log("🔍 _sendToGunDB: Sending message", {
+      path,
+      messageId,
+      type,
+      dataKeys: Object.keys(messageData),
+      timestamp: new Date().toISOString(),
+    });
+
     const messageNode = this.core.db.gun.get(path);
 
     // Clean the data to remove undefined values
     const cleanedData = this._cleanDataForGunDB(messageData);
+    console.log("🔍 _sendToGunDB: Cleaned data", {
+      messageId,
+      cleanedKeys: Object.keys(cleanedData),
+    });
 
     return new Promise<void>((resolve, reject) => {
       try {
+        console.log("🔍 _sendToGunDB: Calling GunDB put method");
         messageNode.get(messageId).put(cleanedData, (ack: any) => {
+          console.log("🔍 _sendToGunDB: GunDB put callback", { ack });
           if (ack.err) {
+            console.error("🔍 _sendToGunDB: GunDB put error", ack.err);
             reject(new Error(ack.err));
           } else {
+            console.log("🔍 _sendToGunDB: GunDB put successful");
             resolve();
           }
         });
       } catch (error) {
+        console.error("🔍 _sendToGunDB: Exception during put", error);
         reject(error);
       }
     });
@@ -718,7 +963,7 @@ export class TokenRoomManager {
   public async createTokenRoom(
     roomName: string,
     description?: string,
-    maxParticipants?: number
+    maxParticipants?: number,
   ): Promise<{ success: boolean; roomData?: TokenRoomData; error?: string }> {
     // Ensure initialization
     await this.initialize();
@@ -792,7 +1037,7 @@ export class TokenRoomManager {
 
       console.log(
         "🔍 createTokenRoom: Final active rooms:",
-        Array.from(this.activeTokenRooms.keys())
+        Array.from(this.activeTokenRooms.keys()),
       );
 
       this.emitStatus({ type: "room:create:success", roomId });
@@ -853,14 +1098,26 @@ export class TokenRoomManager {
   }
 
   public onTokenRoomMessage(callback: TokenRoomMessageListener): void {
+    console.log(
+      "🔍 TokenRoomManager: onTokenRoomMessage called, registering listener",
+    );
+
     if (typeof callback !== "function") {
+      console.warn(
+        "🔍 TokenRoomManager: Invalid callback provided to onTokenRoomMessage",
+      );
       return;
     }
+
     this.tokenRoomListeners.push(callback);
+    console.log(
+      "🔍 TokenRoomManager: Listener registered, total listeners:",
+      this.tokenRoomListeners.length,
+    );
   }
 
   public removeTokenRoomMessageListener(
-    callback: TokenRoomMessageListener
+    callback: TokenRoomMessageListener,
   ): void {
     const index = this.tokenRoomListeners.indexOf(callback);
     if (index > -1) {
@@ -872,7 +1129,7 @@ export class TokenRoomManager {
    * Leave a token room and remove it from user profile
    */
   public async leaveTokenRoom(
-    roomId: string
+    roomId: string,
   ): Promise<{ success: boolean; error?: string }> {
     if (!roomId) {
       return { success: false, error: "Room ID is required" };
@@ -910,6 +1167,13 @@ export class TokenRoomManager {
     return this._isListeningTokenRooms;
   }
 
+  /**
+   * Check if any token room listeners are active
+   */
+  public hasActiveTokenRoomListeners(): boolean {
+    return this.roomMessageHandlers.size > 0;
+  }
+
   public getTokenRoomMessageListenersCount(): number {
     return this.tokenRoomListeners.length;
   }
@@ -923,13 +1187,37 @@ export class TokenRoomManager {
     console.log("🔍 getActiveRooms: Returning active rooms:", activeRooms);
     console.log(
       "🔍 getActiveRooms: Active rooms map size:",
-      this.activeTokenRooms.size
+      this.activeTokenRooms.size,
     );
     return activeRooms;
   }
 
+  /**
+   * Get token for a specific room (public access for external listeners)
+   */
+  public getRoomToken(roomId: string): string | undefined {
+    return this.activeTokenRooms.get(roomId);
+  }
+
+  /**
+   * Start listening to a specific room (public access for external listeners)
+   */
+  public async startListeningToRoom(
+    roomId: string,
+    token: string,
+  ): Promise<void> {
+    return this._startListeningToRoom(roomId, token);
+  }
+
   public getRoomState(roomId: string) {
     return this.roomStates.get(roomId);
+  }
+
+  /**
+   * Check if a specific room is being listened to
+   */
+  public isListeningToRoom(roomId: string): boolean {
+    return this.roomMessageHandlers.has(roomId);
   }
 
   public getUxSnapshot(): {

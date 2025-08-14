@@ -2,31 +2,35 @@ import { MessagingPlugin } from "../messagingPlugin";
 
 // Mock ShogunCore for testing
 function makeCoreMock() {
-  const currentUserPair = { 
-    pub: "user_pub_key_123", 
+  const currentUserPair = {
+    pub: "user_pub_key_123",
     epub: "user_epub_key_456",
-    alias: "TestUser"
+    alias: "TestUser",
   };
 
   const sea = {
     sign: jest.fn(async (data: string, pair: any) => "signed_data"),
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => JSON.stringify({ content: "decrypted" })),
+    decrypt: jest.fn(async (data: string, secret: string) =>
+      JSON.stringify({ content: "decrypted" })
+    ),
     verify: jest.fn(async (signature: string, pub: string) => "verified_data"),
   };
 
   const crypto = {
     secret: jest.fn(async (epub: string, pair: any) => "shared_secret_key"),
     encrypt: jest.fn(async (data: any, secret: string) => "encrypted_data"),
-    decrypt: jest.fn(async (data: string, secret: string) => JSON.stringify({ content: "decrypted" })),
+    decrypt: jest.fn(async (data: string, secret: string) =>
+      JSON.stringify({ content: "decrypted" })
+    ),
   };
 
   // Create a mock that supports chained .get() calls with proper put method
   const createMockGunNode = () => {
     const node = {
       put: jest.fn((data: any, callback?: any) => {
-        if (callback && typeof callback === 'function') {
+        if (callback && typeof callback === "function") {
           callback({});
         }
         return node;
@@ -34,9 +38,9 @@ function makeCoreMock() {
       get: jest.fn(() => node),
       map: jest.fn(() => ({
         on: jest.fn(() => ({ off: jest.fn() })),
-        once: jest.fn((callback: any) => callback({ epub: "recipient_epub" }))
+        once: jest.fn((callback: any) => callback({ epub: "recipient_epub" })),
       })),
-      once: jest.fn((callback: any) => callback({ epub: "recipient_epub" }))
+      once: jest.fn((callback: any) => callback({ epub: "recipient_epub" })),
     };
     return node;
   };
@@ -46,12 +50,12 @@ function makeCoreMock() {
     const userChain = {
       get: jest.fn(() => createMockGunNode()),
       put: jest.fn((data: any, callback?: any) => {
-        if (callback && typeof callback === 'function') {
+        if (callback && typeof callback === "function") {
           callback({});
         }
         return userChain;
       }),
-      once: jest.fn((callback: any) => callback({ epub: "recipient_epub" }))
+      once: jest.fn((callback: any) => callback({ epub: "recipient_epub" })),
     };
     return userChain;
   };
@@ -61,16 +65,17 @@ function makeCoreMock() {
     user: jest.fn(() => createMockUserChain()),
   };
 
-  const user = { _?: { sea: currentUserPair } } as any;
+  const user = { _: { sea: currentUserPair } } as any;
 
   const core: any = {
-    db: { 
-      gun, 
-      user, 
-      sea, 
+    db: {
+      gun,
+      user,
+      sea,
       crypto,
       getCurrentUser: jest.fn(() => ({ pub: "user_pub_key_123" })),
-      putUserData: jest.fn().mockResolvedValue(undefined)
+      putUserData: jest.fn().mockResolvedValue(undefined),
+      getUserData: jest.fn().mockResolvedValue({}),
     },
     isLoggedIn: () => true,
   };
@@ -107,7 +112,10 @@ describe("MessagingPlugin Integration", () => {
       const recipientPub = "recipient_pub_key";
       const messageContent = "Hello, this is a private message!";
 
-      const result = await messagingPlugin.sendMessage(recipientPub, messageContent);
+      const result = await messagingPlugin.sendMessage(
+        recipientPub,
+        messageContent
+      );
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
@@ -117,10 +125,15 @@ describe("MessagingPlugin Integration", () => {
     test("should fail when user is not logged in", async () => {
       mockCore.isLoggedIn = () => false;
 
-      const result = await messagingPlugin.sendMessage("recipient_pub", "Hello");
+      const result = await messagingPlugin.sendMessage(
+        "recipient_pub",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Devi essere loggato per inviare un messaggio.");
+      expect(result.error).toContain(
+        "Devi essere loggato per inviare un messaggio."
+      );
     });
 
     test("should fail with invalid inputs", async () => {
@@ -151,26 +164,36 @@ describe("MessagingPlugin Integration", () => {
       const messageContent = "Hello group members!";
 
       // Mock the GroupManager's getGroupData method directly
-      jest.spyOn(messagingPlugin.groupManagerForTesting, 'getGroupData').mockResolvedValue({
-        id: groupId,
-        name: "Test Group",
-        members: ["user_pub_key_123", "member1"],
-        encryptedKeys: {
-          "user_pub_key_123": "encrypted_key_1"
-        }
-      });
+      jest
+        .spyOn(messagingPlugin.groupManagerForTesting, "getGroupData")
+        .mockResolvedValue({
+          id: groupId,
+          name: "Test Group",
+          members: ["user_pub_key_123", "member1"],
+          encryptedKeys: {
+            user_pub_key_123: "encrypted_key_1",
+          },
+        });
 
       // Mock the encryption manager to avoid the slice error
-      jest.spyOn(messagingPlugin.encryptionManagerForTesting, 'getRecipientEpub').mockResolvedValue("user_epub_key_456");
+      jest
+        .spyOn(messagingPlugin.encryptionManagerForTesting, "getRecipientEpub")
+        .mockResolvedValue("user_epub_key_456");
 
-      const result = await messagingPlugin.sendGroupMessage(groupId, messageContent);
+      const result = await messagingPlugin.sendGroupMessage(
+        groupId,
+        messageContent
+      );
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
     });
 
     test("should fail when group does not exist", async () => {
-      const result = await messagingPlugin.sendGroupMessage("nonexistent_group", "Hello");
+      const result = await messagingPlugin.sendGroupMessage(
+        "nonexistent_group",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Non sei membro di questo gruppo");
@@ -182,7 +205,10 @@ describe("MessagingPlugin Integration", () => {
       const roomName = "Secret Room";
       const description = "A private room for sensitive discussions";
 
-      const result = await messagingPlugin.createTokenRoom(roomName, description);
+      const result = await messagingPlugin.createTokenRoom(
+        roomName,
+        description
+      );
 
       expect(result.success).toBe(true);
       expect(result.roomData).toBeDefined();
@@ -196,7 +222,11 @@ describe("MessagingPlugin Integration", () => {
       const messageContent = "Secret message for token holders";
       const token = "shared_token_123";
 
-      const result = await messagingPlugin.sendTokenRoomMessage(roomId, messageContent, token);
+      const result = await messagingPlugin.sendTokenRoomMessage(
+        roomId,
+        messageContent,
+        token
+      );
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
@@ -207,22 +237,24 @@ describe("MessagingPlugin Integration", () => {
       const token = "shared_token_123";
 
       // Mock token room data to exist
-      jest.spyOn(messagingPlugin, 'getTokenRoomData').mockResolvedValue({
+      jest.spyOn(messagingPlugin, "getTokenRoomData").mockResolvedValue({
         id: roomId,
         name: "Test Room",
         token: token,
         createdBy: "creator_pub_key_123",
-        createdAt: Date.now()
+        createdAt: Date.now(),
       });
 
       // Mock the TokenRoomManager's getTokenRoomData method directly
-      jest.spyOn(messagingPlugin.tokenRoomManagerForTesting, 'getTokenRoomData').mockResolvedValue({
-        id: roomId,
-        name: "Test Room",
-        token: token,
-        createdBy: "creator_pub_key_123",
-        createdAt: Date.now()
-      });
+      jest
+        .spyOn(messagingPlugin.tokenRoomManagerForTesting, "getTokenRoomData")
+        .mockResolvedValue({
+          id: roomId,
+          name: "Test Room",
+          token: token,
+          createdBy: "creator_pub_key_123",
+          createdAt: Date.now(),
+        });
 
       const result = await messagingPlugin.joinTokenRoom(roomId, token);
 
@@ -231,10 +263,16 @@ describe("MessagingPlugin Integration", () => {
     });
 
     test("should fail with invalid token", async () => {
-      const result = await messagingPlugin.sendTokenRoomMessage("room_123", "Hello", "");
+      const result = await messagingPlugin.sendTokenRoomMessage(
+        "room_123",
+        "Hello",
+        ""
+      );
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("ID stanza, contenuto e token sono obbligatori");
+      expect(result.error).toContain(
+        "ID stanza, contenuto e token sono obbligatori"
+      );
     });
   });
 
@@ -243,7 +281,10 @@ describe("MessagingPlugin Integration", () => {
       const roomId = "general";
       const messageContent = "Hello everyone in the public room!";
 
-      const result = await messagingPlugin.sendPublicMessage(roomId, messageContent);
+      const result = await messagingPlugin.sendPublicMessage(
+        roomId,
+        messageContent
+      );
 
       expect(result.success).toBe(true);
       expect(result.messageId).toBeDefined();
@@ -253,7 +294,9 @@ describe("MessagingPlugin Integration", () => {
       const result = await messagingPlugin.sendPublicMessage("", "Hello");
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("ID stanza e messaggio sono obbligatori e devono essere stringhe valide");
+      expect(result.error).toContain(
+        "ID stanza e messaggio sono obbligatori e devono essere stringhe valide"
+      );
     });
   });
 
@@ -272,10 +315,10 @@ describe("MessagingPlugin Integration", () => {
 
     test("should join group chat", async () => {
       // Mock group data to exist
-      jest.spyOn(messagingPlugin, 'getGroupData').mockResolvedValue({
+      jest.spyOn(messagingPlugin, "getGroupData").mockResolvedValue({
         id: "group_123",
         name: "Test Group",
-        members: ["user_pub_key_123"]
+        members: ["user_pub_key_123"],
       });
 
       const result = await messagingPlugin.joinChat("group", "group_123");
@@ -285,22 +328,28 @@ describe("MessagingPlugin Integration", () => {
 
     test("should join token room", async () => {
       // Mock token room data to exist
-      jest.spyOn(messagingPlugin, 'getTokenRoomData').mockResolvedValue({
-        id: "room_123",
-        name: "Test Room",
-        token: "shared_token"
-      });
-
-      // Mock the TokenRoomManager's getTokenRoomData method directly
-      jest.spyOn(messagingPlugin.tokenRoomManagerForTesting, 'getTokenRoomData').mockResolvedValue({
+      jest.spyOn(messagingPlugin, "getTokenRoomData").mockResolvedValue({
         id: "room_123",
         name: "Test Room",
         token: "shared_token",
-        createdBy: "creator_pub_key_123",
-        createdAt: Date.now()
       });
 
-      const result = await messagingPlugin.joinChat("token", "room_123", "shared_token");
+      // Mock the TokenRoomManager's getTokenRoomData method directly
+      jest
+        .spyOn(messagingPlugin.tokenRoomManagerForTesting, "getTokenRoomData")
+        .mockResolvedValue({
+          id: "room_123",
+          name: "Test Room",
+          token: "shared_token",
+          createdBy: "creator_pub_key_123",
+          createdAt: Date.now(),
+        });
+
+      const result = await messagingPlugin.joinChat(
+        "token",
+        "room_123",
+        "shared_token"
+      );
 
       expect(result.success).toBe(true);
     });
@@ -443,7 +492,10 @@ describe("MessagingPlugin Integration", () => {
         throw new Error("Network error");
       });
 
-      const result = await messagingPlugin.sendMessage("recipient_pub", "Hello");
+      const result = await messagingPlugin.sendMessage(
+        "recipient_pub",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Network error");
@@ -451,20 +503,30 @@ describe("MessagingPlugin Integration", () => {
 
     test("should handle encryption errors gracefully", async () => {
       // Mock encryption failure by making the encryption manager throw
-      jest.spyOn(messagingPlugin.encryptionManagerForTesting, 'getRecipientEpub').mockRejectedValue(
-        new Error("Impossibile derivare il secret condiviso")
+      jest
+        .spyOn(messagingPlugin.encryptionManagerForTesting, "getRecipientEpub")
+        .mockRejectedValue(
+          new Error("Impossibile derivare il secret condiviso")
+        );
+
+      const result = await messagingPlugin.sendMessage(
+        "recipient_pub",
+        "Hello"
       );
 
-      const result = await messagingPlugin.sendMessage("recipient_pub", "Hello");
-
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Impossibile derivare il secret condiviso");
+      expect(result.error).toContain(
+        "Impossibile derivare il secret condiviso"
+      );
     });
 
     test("should handle missing user data gracefully", async () => {
       mockCore.db.user = { _: {} }; // No sea property
 
-      const result = await messagingPlugin.sendMessage("recipient_pub", "Hello");
+      const result = await messagingPlugin.sendMessage(
+        "recipient_pub",
+        "Hello"
+      );
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("Coppia di chiavi utente non disponibile");
@@ -474,22 +536,28 @@ describe("MessagingPlugin Integration", () => {
   describe("Integration Scenarios", () => {
     test("should handle complete messaging workflow", async () => {
       // 1. Create a group
-      const groupResult = await messagingPlugin.createGroup("Test Group", ["member1"]);
+      const groupResult = await messagingPlugin.createGroup("Test Group", [
+        "member1",
+      ]);
       expect(groupResult.success).toBe(true);
 
       // 2. Send group message - mock the group data to exist
-      jest.spyOn(messagingPlugin.groupManagerForTesting, 'getGroupData').mockResolvedValue({
-        id: groupResult.groupData!.id,
-        name: "Test Group",
-        members: ["user_pub_key_123", "member1"],
-        encryptedKeys: {
-          "user_pub_key_123": "encrypted_key_1"
-        }
-      });
+      jest
+        .spyOn(messagingPlugin.groupManagerForTesting, "getGroupData")
+        .mockResolvedValue({
+          id: groupResult.groupData!.id,
+          name: "Test Group",
+          members: ["user_pub_key_123", "member1"],
+          encryptedKeys: {
+            user_pub_key_123: "encrypted_key_1",
+          },
+        });
 
       // Mock the encryption manager to avoid the slice error
-      jest.spyOn(messagingPlugin.encryptionManagerForTesting, 'getRecipientEpub').mockResolvedValue("user_epub_key_456");
-      
+      jest
+        .spyOn(messagingPlugin.encryptionManagerForTesting, "getRecipientEpub")
+        .mockResolvedValue("user_epub_key_456");
+
       const groupMessageResult = await messagingPlugin.sendGroupMessage(
         groupResult.groupData!.id,
         "Hello group!"

@@ -61,7 +61,7 @@ export class MessagingPlugin extends BasePlugin {
     this.groupManager = new GroupManager(core, this.encryptionManager);
     this.publicRoomManager = new PublicRoomManager(
       core,
-      this.encryptionManager
+      this.encryptionManager,
     );
     this.tokenRoomManager = new TokenRoomManager(core, this.encryptionManager, {
       enablePagination: true,
@@ -77,11 +77,14 @@ export class MessagingPlugin extends BasePlugin {
     this.messageProcessor = new MessageProcessor(
       core,
       this.encryptionManager,
-      this.groupManager
+      this.groupManager,
     );
 
     // Initialize the token room manager
     await this.tokenRoomManager.initialize();
+
+    // **FIX: Initialize the group manager**
+    await this.groupManager.initialize();
   }
 
   // ============================================================================
@@ -93,7 +96,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async sendMessage(
     recipientPub: string,
-    messageContent: string
+    messageContent: string,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
@@ -123,7 +126,7 @@ export class MessagingPlugin extends BasePlugin {
         const bytes = new Uint8Array(8);
         (globalThis as any)?.crypto?.getRandomValues?.(bytes);
         const rand = Array.from(bytes, (b) =>
-          b.toString(16).padStart(2, "0")
+          b.toString(16).padStart(2, "0"),
         ).join("");
         return `msg_${Date.now()}_${rand}`;
       })();
@@ -143,12 +146,12 @@ export class MessagingPlugin extends BasePlugin {
           timestamp: messageData.timestamp,
           id: messageData.id,
         },
-        Object.keys({ content: "", timestamp: 0, id: "" }).sort()
+        Object.keys({ content: "", timestamp: 0, id: "" }).sort(),
       );
 
       messageData.signature = await this.core.db.sea.sign(
         dataToSign,
-        currentUserPair
+        currentUserPair,
       );
 
       // Encrypt the entire message for the recipient
@@ -156,11 +159,11 @@ export class MessagingPlugin extends BasePlugin {
         await this.encryptionManager.getRecipientEpub(recipientPub);
       const sharedSecret = await this.core.db.sea.secret(
         recipientEpub,
-        currentUserPair
+        currentUserPair,
       );
       const encryptedMessage = await this.core.db.sea.encrypt(
         messageData,
-        sharedSecret || ""
+        sharedSecret || "",
       );
 
       // Create the wrapper for GunDB
@@ -177,7 +180,7 @@ export class MessagingPlugin extends BasePlugin {
         recipientPub,
         messageId,
         encryptedMessageData,
-        "private"
+        "private",
       );
 
       return { success: true, messageId };
@@ -195,9 +198,28 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async sendGroupMessage(
     groupId: string,
-    messageContent: string
+    messageContent: string,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    return this.groupManager.sendGroupMessage(groupId, messageContent);
+    console.log(
+      "🔍 sendGroupMessage: Starting to send message to group",
+      groupId,
+    );
+    console.log(
+      "🔍 sendGroupMessage: Message content length:",
+      messageContent.length,
+    );
+
+    // Check if group listener is active
+    const hasListener = this.hasGroupListener(groupId);
+    console.log("🔍 sendGroupMessage: Has group listener:", hasListener);
+
+    const result = await this.groupManager.sendGroupMessage(
+      groupId,
+      messageContent,
+    );
+
+    console.log("🔍 sendGroupMessage: Result:", result);
+    return result;
   }
 
   /**
@@ -206,12 +228,12 @@ export class MessagingPlugin extends BasePlugin {
   public async sendTokenRoomMessage(
     roomId: string,
     messageContent: string,
-    token: string
+    token: string,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     return this.tokenRoomManager.sendTokenRoomMessage(
       roomId,
       messageContent,
-      token
+      token,
     );
   }
 
@@ -220,7 +242,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async sendPublicMessage(
     roomId: string,
-    messageContent: string
+    messageContent: string,
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     return this.publicRoomManager.sendPublicMessage(roomId, messageContent);
   }
@@ -230,7 +252,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async createPublicRoom(
     roomName: string,
-    description?: string
+    description?: string,
   ): Promise<{ success: boolean; roomData?: any; error?: string }> {
     return this.publicRoomManager.createPublicRoom(roomName, description);
   }
@@ -306,7 +328,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async joinChat(
     chatType: "private" | "public" | "group" | "token",
-    chatId: string
+    chatId: string,
   ): Promise<{ success: boolean; chatData?: any; error?: string }> {
     try {
       if (!chatType || !chatId) {
@@ -323,9 +345,21 @@ export class MessagingPlugin extends BasePlugin {
       }
 
       if (chatType === "group") {
-        // Ensure a listener is attached and return current metadata
+        // **FIX: Ensure a listener is attached and return current metadata**
+        console.log(
+          "🔍 joinChat(group): Activating listener for group",
+          chatId,
+        );
         this.messageProcessor.addGroupListener(chatId);
         const groupData = await this.groupManager.getGroupData(chatId);
+
+        // Log the result for debugging
+        if (groupData) {
+          console.log("🔍 joinChat(group): Successfully joined group", chatId);
+        } else {
+          console.warn("🔍 joinChat(group): Group not found", chatId);
+        }
+
         return {
           success: !!groupData,
           chatData: groupData || { type: "group", id: chatId, name: chatId },
@@ -342,7 +376,7 @@ export class MessagingPlugin extends BasePlugin {
         // Join token room and return room data
         const result = await this.tokenRoomManager.joinTokenRoom(
           chatId,
-          arguments[2] || ""
+          arguments[2] || "",
         );
         return {
           success: result.success,
@@ -390,9 +424,20 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async createGroup(
     groupName: string,
-    memberPubs: string[]
+    memberPubs: string[],
   ): Promise<{ success: boolean; groupData?: any; error?: string }> {
-    return this.groupManager.createGroup(groupName, memberPubs);
+    const result = await this.groupManager.createGroup(groupName, memberPubs);
+
+    // **FIX: Activate listener for the new group if creation was successful**
+    if (result.success && result.groupData) {
+      console.log(
+        "🔍 createGroup: Activating listener for new group",
+        result.groupData.id,
+      );
+      this.messageProcessor.addGroupListener(result.groupData.id);
+    }
+
+    return result;
   }
 
   /**
@@ -401,12 +446,12 @@ export class MessagingPlugin extends BasePlugin {
   public async createTokenRoom(
     roomName: string,
     description?: string,
-    maxParticipants?: number
+    maxParticipants?: number,
   ): Promise<{ success: boolean; roomData?: any; error?: string }> {
     return this.tokenRoomManager.createTokenRoom(
       roomName,
       description,
-      maxParticipants
+      maxParticipants,
     );
   }
 
@@ -429,7 +474,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async joinTokenRoom(
     roomId: string,
-    token: string
+    token: string,
   ): Promise<{ success: boolean; roomData?: any; error?: string }> {
     return this.tokenRoomManager.joinTokenRoom(roomId, token);
   }
@@ -554,7 +599,7 @@ export class MessagingPlugin extends BasePlugin {
    * Only the room creator can delete the room
    */
   public async deleteTokenRoom(
-    roomId: string
+    roomId: string,
   ): Promise<{ success: boolean; error?: string }> {
     // For now, just leave the room - full deletion requires additional implementation
     this.tokenRoomManager.stopListeningTokenRooms();
@@ -570,16 +615,37 @@ export class MessagingPlugin extends BasePlugin {
 
   /**
    * Adds a realtime listener for a specific group's messages (protocol level)
+   * This method should be called by the frontend when a user enters a group
    */
   public addGroupListener(groupId: string): void {
+    console.log(
+      "🔍 addGroupListener: Frontend requested listener for group",
+      groupId,
+    );
     this.messageProcessor.addGroupListener(groupId);
+
+    // Log the current status after adding the listener
+    const status = this.getListenerStatus();
+    console.log("🔍 addGroupListener: Current listener status:", {
+      isListeningGroups: status.isListeningGroups,
+      groupListenersCount: status.groupListenersCount,
+    });
   }
 
   /**
    * Removes the realtime listener for a specific group's messages (protocol level)
    */
   public removeGroupListener(groupId: string): void {
+    console.log("🔍 removeGroupListener: Removing listener for group", groupId);
     this.messageProcessor.removeGroupListener(groupId);
+  }
+
+  /**
+   * Checks if a specific group has an active listener
+   * This method can be used by the frontend to verify listener status
+   */
+  public hasGroupListener(groupId: string): boolean {
+    return this.messageProcessor.hasGroupListener(groupId);
   }
 
   /**
@@ -587,6 +653,52 @@ export class MessagingPlugin extends BasePlugin {
    */
   public startProtocolListeners(): void {
     this.messageProcessor.startListening();
+
+    // **FIX: Automatically activate listeners for existing groups and token rooms**
+    this._activateExistingListeners();
+  }
+
+  /**
+   * **FIX: Activate listeners for groups and token rooms the user is already part of**
+   */
+  private async _activateExistingListeners(): Promise<void> {
+    try {
+      // Activate listeners for groups the user is part of
+      if (this.core.isLoggedIn() && this.core.db.user) {
+        const currentUserPub = (this.core.db.user as any)._?.sea?.pub;
+        if (currentUserPub) {
+          // Get user's groups from their profile
+          const userGroups = (await this.core.db.getUserData("groups")) || {};
+          for (const groupId of Object.keys(userGroups)) {
+            console.log(
+              "🔍 _activateExistingListeners: Activating group listener for",
+              groupId,
+            );
+            this.messageProcessor.addGroupListener(groupId);
+          }
+        }
+      }
+
+      // Activate listeners for token rooms the user has joined
+      if (this.tokenRoomManager) {
+        const activeRooms = this.tokenRoomManager.getActiveRooms();
+        for (const roomId of activeRooms) {
+          const token = this.tokenRoomManager.getRoomToken(roomId);
+          if (token) {
+            console.log(
+              "🔍 _activateExistingListeners: Activating token room listener for",
+              roomId,
+            );
+            await this.tokenRoomManager.startListeningToRoom(roomId, token);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "🔍 _activateExistingListeners: Error activating existing listeners:",
+        error,
+      );
+    }
   }
 
   /**
@@ -604,10 +716,24 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   /**
+   * Checks if group listeners are active
+   */
+  public areGroupListenersActive(): boolean {
+    return this.messageProcessor.isListeningGroups();
+  }
+
+  /**
+   * Checks if token room listeners are active
+   */
+  public areTokenRoomListenersActive(): boolean {
+    return this.tokenRoomManager.isListeningTokenRooms();
+  }
+
+  /**
    * Clears all messages for a specific conversation
    */
   public async clearConversation(
-    recipientPub: string
+    recipientPub: string,
   ): Promise<{ success: boolean; error?: string; clearedCount?: number }> {
     return this.messageProcessor.clearConversation(recipientPub);
   }
@@ -617,13 +743,23 @@ export class MessagingPlugin extends BasePlugin {
    */
   public getListenerStatus(): {
     isListening: boolean;
+    isListeningGroups: boolean;
+    isListeningTokenRooms: boolean;
     messageListenersCount: number;
+    groupListenersCount: number;
+    tokenRoomListenersCount: number;
     processedMessagesCount: number;
     clearedConversationsCount: number;
   } {
     return {
       isListening: this.messageProcessor.isListening(),
+      isListeningGroups: this.messageProcessor.isListeningGroups(),
+      isListeningTokenRooms: this.tokenRoomManager.isListeningTokenRooms(),
       messageListenersCount: this.messageProcessor.getMessageListenersCount(),
+      groupListenersCount:
+        this.messageProcessor.getGroupMessageListenersCount(),
+      tokenRoomListenersCount:
+        this.tokenRoomManager.getTokenRoomMessageListenersCount(),
       processedMessagesCount: this.messageProcessor.getProcessedMessagesCount(),
       clearedConversationsCount:
         this.messageProcessor.getClearedConversationsCount(),
@@ -639,7 +775,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async startTokenRoomMessageListener(
     roomId: string,
-    callback: (message: any) => void
+    callback: (message: any) => void,
   ): Promise<{ success: boolean; error?: string }> {
     // Use the new unified listener system
     this.tokenRoomManager.onTokenRoomMessage(callback);
@@ -651,7 +787,7 @@ export class MessagingPlugin extends BasePlugin {
    * Stop real-time message listener for token rooms
    */
   public async stopTokenRoomMessageListener(
-    roomId: string
+    roomId: string,
   ): Promise<{ success: boolean; error?: string }> {
     // Stop all listeners - the new system manages them centrally
     this.tokenRoomManager.stopListeningTokenRooms();

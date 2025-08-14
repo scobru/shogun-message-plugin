@@ -213,7 +213,7 @@ export interface MessagingPluginInterface {
    */
   sendMessage(
     recipientPub: string,
-    messageContent: string
+    messageContent: string,
   ): Promise<MessageSendResult>;
 
   /**
@@ -254,7 +254,7 @@ export interface MessagingPluginInterface {
   getConversations(): Promise<Conversation[]>;
   getMessageHistory(
     participantPub: string,
-    limit?: number
+    limit?: number,
   ): Promise<DecryptedMessage[]>;
 
   // Certificate management

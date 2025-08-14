@@ -90,7 +90,7 @@ export function limitMapSize<T>(map: Map<string, T>, maxSize: number): void {
  */
 export function cleanupExpiredEntries(
   map: Map<string, number>,
-  ttl: number
+  ttl: number,
 ): void {
   const now = Date.now();
   const expiredIds: string[] = [];
@@ -112,7 +112,7 @@ export function generateInviteLink(
   chatId: string,
   chatName?: string,
   token?: string,
-  baseUrlOverride?: string
+  baseUrlOverride?: string,
 ): string {
   const baseUrl =
     baseUrlOverride ||
@@ -145,7 +145,7 @@ export function generateSecureToken(): string {
   const array = new Uint8Array(32);
   crypto.getRandomValues(array);
   return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join(
-    ""
+    "",
   );
 }
 
@@ -166,7 +166,7 @@ export async function sendToGunDB(
   path: string,
   messageId: string,
   messageData: any,
-  type: "private" | "public" | "group"
+  type: "private" | "public" | "group",
 ): Promise<void> {
   if (!core || !core.db || !core.db.gun) {
     throw new Error("Shogun Core or GunDB not initialized.");

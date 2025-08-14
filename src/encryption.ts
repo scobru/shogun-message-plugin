@@ -106,7 +106,7 @@ export class EncryptionManager {
 
       // If all else fails, throw an error instead of creating a temporary epub
       throw new Error(
-        `Cannot find encryption public key (epub) for recipient: ${recipientPub.slice(0, 8)}...`
+        `Cannot find encryption public key (epub) for recipient: ${recipientPub.slice(0, 8)}...`,
       );
     } catch (error: any) {
       // If we're trying to message ourselves and all else fails, use our own epub
@@ -124,7 +124,7 @@ export class EncryptionManager {
    */
   public async encryptMessage(
     messageData: MessageData,
-    recipientPub: string
+    recipientPub: string,
   ): Promise<string> {
     const currentUserPair = (this.core.db.user as any)._?.sea;
     if (!currentUserPair) {
@@ -137,7 +137,7 @@ export class EncryptionManager {
     // Usa E2E encryption: deriva un secret condiviso e cifra con quello
     const sharedSecret = await this.core.db.crypto.secret(
       recipientEpub,
-      currentUserPair
+      currentUserPair,
     );
 
     if (!sharedSecret) {
@@ -146,7 +146,7 @@ export class EncryptionManager {
 
     const encryptedData = await this.core.db.crypto.encrypt(
       JSON.stringify(messageData),
-      sharedSecret
+      sharedSecret,
     );
 
     if (!encryptedData || typeof encryptedData !== "string") {
@@ -162,7 +162,7 @@ export class EncryptionManager {
   public async decryptMessage(
     encryptedData: string,
     currentUserPair: any,
-    senderPub: string
+    senderPub: string,
   ): Promise<MessageData> {
     // Get the sender's encryption public key
     const senderEpub = await this.getRecipientEpub(senderPub);
@@ -170,7 +170,7 @@ export class EncryptionManager {
     // Usa E2E decryption: deriva il secret condiviso dal mittente
     const sharedSecret = await this.core.db.crypto.secret(
       senderEpub,
-      currentUserPair
+      currentUserPair,
     );
     if (!sharedSecret) {
       throw new Error("Impossibile derivare il secret condiviso dal mittente");
@@ -179,7 +179,7 @@ export class EncryptionManager {
     // Decifra usando il secret condiviso
     const decryptedJson = await this.core.db.crypto.decrypt(
       encryptedData,
-      sharedSecret
+      sharedSecret,
     );
 
     let messageData: MessageData;
@@ -207,7 +207,7 @@ export class EncryptionManager {
   public async verifyMessageSignature(
     content: string,
     signature: string,
-    senderPub: string
+    senderPub: string,
   ): Promise<boolean> {
     try {
       // SEA.verify returns the original data if signature is valid, otherwise falsy
