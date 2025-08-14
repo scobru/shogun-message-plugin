@@ -296,7 +296,7 @@ export class TokenRoomManager {
   }
 
   /**
-   * Store room reference in user profile for persistence
+   * Store a reference to a token room in user's profile
    */
   private async _storeRoomReference(
     roomId: string,
@@ -307,12 +307,24 @@ export class TokenRoomManager {
     }
 
     try {
+      // Validate input data to prevent GunDB errors
+      if (!roomId || !roomName) {
+        console.warn("🔍 _storeRoomReference: Invalid room data, skipping save");
+        return;
+      }
+
       const roomReference = {
         type: "token",
-        id: roomId,
-        name: roomName,
+        id: roomId || "",
+        name: roomName || "Token Room",
         joinedAt: Date.now(),
       };
+
+      // Validate all required fields are present
+      if (!roomReference.id || !roomReference.name) {
+        console.warn("🔍 _storeRoomReference: Missing required fields, skipping save");
+        return;
+      }
 
       console.log("🔍 _storeRoomReference: Storing room reference:", {
         roomId,
@@ -894,22 +906,37 @@ export class TokenRoomManager {
   }
 
   private _cleanDataForGunDB(data: any): any {
+    // Handle null and undefined
     if (data === null || data === undefined) {
       return null;
     }
 
+    // Handle primitive types
+    if (typeof data === "string" || typeof data === "number" || typeof data === "boolean") {
+      return data;
+    }
+
+    // Handle objects
     if (typeof data === "object" && !Array.isArray(data)) {
       const cleaned: any = {};
       for (const [key, value] of Object.entries(data)) {
+        // Skip undefined values completely
         if (value !== undefined) {
-          cleaned[key] = this._cleanDataForGunDB(value);
+          const cleanedValue = this._cleanDataForGunDB(value);
+          // Only add if the cleaned value is not null/undefined
+          if (cleanedValue !== null && cleanedValue !== undefined) {
+            cleaned[key] = cleanedValue;
+          }
         }
       }
       return cleaned;
     }
 
+    // Handle arrays
     if (Array.isArray(data)) {
-      return data.map((item) => this._cleanDataForGunDB(item));
+      const cleanedArray = data.map((item) => this._cleanDataForGunDB(item));
+      // Filter out null/undefined values
+      return cleanedArray.filter((item) => item !== null && item !== undefined);
     }
 
     return data;
@@ -1019,12 +1046,32 @@ export class TokenRoomManager {
         ...(maxParticipants && { maxParticipants }), // Only include if provided
       };
 
-      console.log("🔍 createTokenRoom: Room data created:", roomData);
+      // Validate room data before saving to prevent GunDB errors
+      const validatedRoomData = {
+        id: roomData.id || "",
+        name: roomData.name || "Token Room",
+        token: roomData.token || "",
+        createdBy: roomData.createdBy || "",
+        createdAt: roomData.createdAt || Date.now(),
+        ...(roomData.description && { description: roomData.description }),
+        ...(roomData.maxParticipants && { maxParticipants: roomData.maxParticipants }),
+      };
+
+      // Ensure all required fields are present
+      if (!validatedRoomData.id || !validatedRoomData.token || !validatedRoomData.createdBy) {
+        console.warn("🔍 createTokenRoom: Missing required room data, cannot create room");
+        return {
+          success: false,
+          error: "Dati della stanza incompleti.",
+        };
+      }
+
+      console.log("🔍 createTokenRoom: Room data created:", validatedRoomData);
 
       // Store room data
       const roomPath = `tokenRoom_${roomId}`;
       console.log("🔍 createTokenRoom: Storing room data to path:", roomPath);
-      await this._sendToGunDB(roomPath, "data", roomData, "token");
+      await this._sendToGunDB(roomPath, "data", validatedRoomData, "token");
 
       // Add to active rooms
       console.log("🔍 createTokenRoom: Adding to active rooms");
@@ -1041,7 +1088,7 @@ export class TokenRoomManager {
       );
 
       this.emitStatus({ type: "room:create:success", roomId });
-      return { success: true, roomData };
+      return { success: true, roomData: validatedRoomData };
     } catch (error) {
       console.error("🔍 createTokenRoom: Error creating room:", error);
       this.emitStatus({
