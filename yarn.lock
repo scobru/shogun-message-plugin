@@ -3341,10 +3341,10 @@ shebang-regex@^3.0.0:
   resolved "https://registry.yarnpkg.com/shebang-regex/-/shebang-regex-3.0.0.tgz#ae16f1644d873ecad843b0307b143362d4c42172"
   integrity sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==
 
-shogun-core@^1.8.8:
-  version "1.8.8"
-  resolved "https://registry.yarnpkg.com/shogun-core/-/shogun-core-1.8.8.tgz#6d3db1d901c8ba9c2518bdf4b98d35521f426eea"
-  integrity sha512-3FuVSJYyTWy9wPseOliTUrwOROGvBGB7yXe1wyzVkjIJEk2ftdFPorGgG5NNU/HGA8v0RT4G7FgKMLYkQdImUA==
+shogun-core@^1.9.0:
+  version "1.9.0"
+  resolved "https://registry.yarnpkg.com/shogun-core/-/shogun-core-1.9.0.tgz#72ec243549e061a044a9d3eaaa1a843f7f64a99c"
+  integrity sha512-xTb8tQuKBpM32xmBhlsgcdqmUJvFVwbV1rPbwIg1GZFbhOLW6CkpXbWS6ZEhmDoMuCvR0XDctgAvLKujSFPFxw==
   dependencies:
     "@noble/curves" "^1.9.1"
     ajv "^8.17.1"
