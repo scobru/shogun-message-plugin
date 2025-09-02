@@ -96,14 +96,27 @@ export class MessageProcessor {
     const currentUserPub = currentUserPair.pub;
     const currentUserEpub = currentUserPair.epub;
 
-    // Check if RxJS is available and not disabled
-    const disableRxJS = process.env.DISABLE_RXJS === "true" || true; // Force disable RxJS since it's not available
+    // 🔧 CROSS-PLATFORM: Gestione sia Node.js che browser
+    let disableRxJS: boolean;
+    
+    if (typeof process !== 'undefined' && process.env) {
+      // Node.js environment
+      disableRxJS = process.env.DISABLE_RXJS === "true";
+    } else if (typeof window !== 'undefined') {
+      // Browser environment
+      disableRxJS = (window as any).DISABLE_RXJS === "true" || true; // Force disable in browser
+    } else {
+      // Fallback
+      disableRxJS = true;
+    }
+
     console.log("🚀 startListening: Checking RxJS availability:", {
       hasDbRx: !!(this.core.db as any).rx,
       dbRxType: typeof (this.core.db as any).rx,
       coreKeys: Object.keys(this.core),
       dbKeys: Object.keys(this.core.db || {}),
       disableRxJS,
+      environment: typeof process !== 'undefined' ? 'node' : 'browser',
     });
 
     if (

@@ -117,7 +117,19 @@ export const TEST_CONFIG: PluginConfig = {
  * Get configuration based on environment
  */
 export function getConfig(): PluginConfig {
-  const env = process.env.NODE_ENV || "development";
+  // 🔧 CROSS-PLATFORM: Gestione sia Node.js che browser
+  let env: string;
+  
+  if (typeof process !== 'undefined' && process.env) {
+    // Node.js environment
+    env = process.env.NODE_ENV || "development";
+  } else if (typeof window !== 'undefined') {
+    // Browser environment
+    env = (window as any).NODE_ENV || "development";
+  } else {
+    // Fallback
+    env = "development";
+  }
 
   switch (env) {
     case "production":
@@ -129,6 +141,7 @@ export function getConfig(): PluginConfig {
       return DEV_CONFIG;
   }
 }
+
 
 /**
  * Configuration validation
