@@ -159,8 +159,10 @@ Starts listening to legacy paths for real-time message compatibility.
 
 **Parameters:**
 
-- `contactPub` (string): The contact's public key
+- `contactPub` (string): The contact's public key (currently unused, kept for API compatibility)
 - `callback` (function): Function to call when a new message is received
+
+**Note:** The `contactPub` parameter is currently kept for API compatibility but is not used in the filtering logic. The function listens for ALL incoming messages to the current user, not just from a specific contact, to ensure proper message delivery.
 
 **Example:**
 
@@ -1400,6 +1402,131 @@ Getter for accessing the public room manager for testing purposes.
 const publicRoomManager = messagingPlugin.publicRoomManagerForTesting;
 ```
 
+### **NEW: Complete Username Management**
+
+#### `registerUsername(username: string): Promise<{ success: boolean; error?: string }>`
+
+Registers a username for the current user.
+
+**Parameters:**
+- `username` (string): The username to register
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+```typescript
+const result = await messagingPlugin.registerUsername("alice123");
+if (result.success) {
+  console.log("Username registered successfully");
+} else {
+  console.error("Failed to register username:", result.error);
+}
+```
+
+#### `updateUsername(newUsername: string): Promise<{ success: boolean; error?: string }>`
+
+Updates the username for the current user.
+
+**Parameters:**
+- `newUsername` (string): The new username
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+```typescript
+const result = await messagingPlugin.updateUsername("alice456");
+if (result.success) {
+  console.log("Username updated successfully");
+} else {
+  console.error("Failed to update username:", result.error);
+}
+```
+
+#### `deleteUsername(): Promise<{ success: boolean; error?: string }>`
+
+Deletes the username for the current user.
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+```typescript
+const result = await messagingPlugin.deleteUsername();
+if (result.success) {
+  console.log("Username deleted successfully");
+} else {
+  console.error("Failed to delete username:", result.error);
+}
+```
+
+#### `getUsername(userPub: string): Promise<string | null>`
+
+Gets the username for a specific user.
+
+**Parameters:**
+- `userPub` (string): The user's public key
+
+**Returns:** Promise<string | null>
+
+**Example:**
+```typescript
+const username = await messagingPlugin.getUsername("user_public_key");
+if (username) {
+  console.log("Username:", username);
+} else {
+  console.log("No username found");
+}
+```
+
+#### `isUsernameAvailable(username: string): Promise<boolean>`
+
+Checks if a username is available for registration.
+
+**Parameters:**
+- `username` (string): The username to check
+
+**Returns:** Promise<boolean>
+
+**Example:**
+```typescript
+const isAvailable = await messagingPlugin.isUsernameAvailable("alice123");
+if (isAvailable) {
+  console.log("Username is available");
+} else {
+  console.log("Username is already taken");
+}
+```
+
+#### `validateUsername(username: string): { isValid: boolean; error?: string }`
+
+Validates a username format.
+
+**Parameters:**
+- `username` (string): The username to validate
+
+**Returns:** { isValid: boolean; error?: string }
+
+**Example:**
+```typescript
+const validation = messagingPlugin.validateUsername("alice123");
+if (validation.isValid) {
+  console.log("Username format is valid");
+} else {
+  console.error("Username validation failed:", validation.error);
+}
+```
+
+#### `generateRandomUsername(): string`
+
+Generates a random username.
+
+**Returns:** string
+
+**Example:**
+```typescript
+const randomUsername = messagingPlugin.generateRandomUsername();
+console.log("Generated username:", randomUsername);
+```
+
 ## Types and Interfaces
 
 ### MessageSendResult
@@ -1491,6 +1618,27 @@ interface MessageData {
   groupId?: string; // For group messages
   isGroup?: boolean; // Flag to distinguish group messages
   isEncrypted?: boolean; // Flag to indicate if the message was encrypted
+}
+```
+
+### **NEW: Username Management Types**
+
+#### UsernameValidationResult
+
+```typescript
+interface UsernameValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+```
+
+#### UsernameRegistrationResult
+
+```typescript
+interface UsernameRegistrationResult {
+  success: boolean;
+  error?: string;
+  username?: string;
 }
 ```
 

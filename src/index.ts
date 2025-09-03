@@ -21,6 +21,9 @@ export type {
 export { MessagingPlugin } from "./messagingPlugin";
 export { BasePlugin } from "./base";
 
+// **NEW: Export schema for consistent path management**
+export { MessagingSchema } from "./schema";
+
 // **PRODUCTION: Export configuration and constants**
 export type { PluginConfig } from "./config";
 export {
@@ -50,4 +53,10 @@ export type {
   LegacyMessageOptions,
   LegacyMessageResult,
   LegacyMessagesResult
+} from "./types";
+
+// **NEW: Export complete username management types**
+export type {
+  UsernameValidationResult,
+  UsernameRegistrationResult,
 } from "./types";

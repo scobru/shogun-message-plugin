@@ -1,6 +1,7 @@
 import { ShogunCore } from "shogun-core";
 import { EncryptionManager } from "./encryption";
 import { GroupData } from "./types";
+import { MessagingSchema } from "./schema";
 
 
 /**
@@ -233,15 +234,8 @@ export class GroupManager {
         };
       }
 
-      const groupId = `group_${Date.now()}_${Array.from(
-        new Uint8Array(8).map((_, i) => i)
-      )
-        .map(() => {
-          const a = new Uint8Array(1);
-          (globalThis as any)?.crypto?.getRandomValues?.(a);
-          return a[0].toString(16).padStart(2, "0");
-        })
-        .join("")}`;
+      // **IMPROVED: Use schema utility for group ID generation**
+      const groupId = MessagingSchema.utils.generateGroupId();
 
       // **FIX: Create GunDB-compatible data structure**
       // Save basic group info first
@@ -439,7 +433,8 @@ export class GroupManager {
     groupId: string
   ): Promise<any[]> {
     try {
-      const localStorageKey = `group_messages_${groupId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.groups.localStorage(groupId);
       const storedMessages = localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
@@ -467,7 +462,8 @@ export class GroupManager {
     message: any
   ): Promise<void> {
     try {
-      const localStorageKey = `group_messages_${groupId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.groups.localStorage(groupId);
       const existingMessages = JSON.parse(
         localStorage.getItem(localStorageKey) || "[]"
       );
@@ -501,8 +497,8 @@ export class GroupManager {
         groupId
       );
 
-      // Create group messages path
-      const messagesPath = `group_${groupId}_messages`;
+      // **IMPROVED: Use schema for group messages path**
+      const messagesPath = MessagingSchema.groups.messages(groupId);
       const groupMessagesNode = this.core.db.gun.get(messagesPath).map();
 
       // Set up listener with NEW message filtering
@@ -753,15 +749,8 @@ export class GroupManager {
         groupKey
       );
 
-      const messageId = `msg_${Date.now()}_${Array.from(
-        new Uint8Array(8).map((_, i) => i)
-      )
-        .map(() => {
-          const a = new Uint8Array(1);
-          (globalThis as any)?.crypto?.getRandomValues?.(a);
-          return a[0].toString(16).padStart(2, "0");
-        })
-        .join("")}`;
+              // **IMPROVED: Use schema utility for message ID generation**
+        const messageId = MessagingSchema.utils.generateMessageId();
       const message = {
         id: messageId,
         from: senderPub,

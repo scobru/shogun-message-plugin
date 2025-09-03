@@ -12,6 +12,7 @@ import {
   createSafePath,
 } from "./utils";
 import { EncryptionManager } from "./encryption";
+import { MessagingSchema } from "./schema";
 
 /**
  * Configuration options to improve developer UX/observability without changing behavior
@@ -449,8 +450,8 @@ export class TokenRoomManager {
         id: messageId,
       };
 
-      // **STEP 4.4: Send to GunDB**
-      const messagesPath = `tokenRoom_${roomId}_messages`;
+      // **IMPROVED: Use schema for token room messages path**
+      const messagesPath = MessagingSchema.tokenRooms.messages(roomId);
       console.log(
         "🔍 sendTokenRoomMessage: Sending to GunDB path",
         messagesPath
@@ -598,7 +599,8 @@ export class TokenRoomManager {
       return; // Already listening
     }
 
-    const messagesPath = `tokenRoom_${roomId}_messages`;
+    // **IMPROVED: Use schema for token room messages path**
+    const messagesPath = MessagingSchema.tokenRooms.messages(roomId);
     console.log("🔍 _startListeningToRoom: Using path", messagesPath);
 
     const roomMessagesNode = this.core.db.gun.get(messagesPath).map();
@@ -905,7 +907,8 @@ export class TokenRoomManager {
    */
   private async _loadMessagesFromLocalStorage(roomId: string): Promise<any[]> {
     try {
-      const localStorageKey = `tokenRoom_messages_${roomId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.tokenRooms.localStorage(roomId);
       const storedMessages = localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
@@ -936,7 +939,8 @@ export class TokenRoomManager {
     message: any
   ): Promise<void> {
     try {
-      const localStorageKey = `tokenRoom_messages_${roomId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.tokenRooms.localStorage(roomId);
       const existingMessages = JSON.parse(
         localStorage.getItem(localStorageKey) || "[]"
       );
@@ -1163,7 +1167,8 @@ export class TokenRoomManager {
       console.log("🔍 createTokenRoom: Room data created:", validatedRoomData);
 
       // Store room data
-      const roomPath = `tokenRoom_${roomId}`;
+      // **IMPROVED: Use schema for token room data path**
+      const roomPath = MessagingSchema.tokenRooms.data(roomId);
       console.log("🔍 createTokenRoom: Storing room data to path:", roomPath);
       await this._sendToGunDB(roomPath, "data", validatedRoomData, "token");
 
@@ -1203,7 +1208,8 @@ export class TokenRoomManager {
     }
 
     try {
-      const roomPath = `tokenRoom_${roomId}`;
+      // **IMPROVED: Use schema for token room data path**
+      const roomPath = MessagingSchema.tokenRooms.data(roomId);
       console.log("🔍 getTokenRoomData: Looking for room at path:", roomPath);
       console.log("🔍 getTokenRoomData: Room ID:", roomId);
       console.log(

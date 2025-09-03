@@ -349,3 +349,15 @@ export interface LegacyMessagesResult {
   messages?: any[];
   error?: string;
 }
+
+// **NEW: Username management types**
+export interface UsernameValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+export interface UsernameRegistrationResult {
+  success: boolean;
+  error?: string;
+  username?: string;
+}

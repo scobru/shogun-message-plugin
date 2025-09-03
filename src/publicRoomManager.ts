@@ -11,6 +11,7 @@ import {
   generateSecureToken,
 } from "./utils";
 import { EncryptionManager } from "./encryption";
+import { MessagingSchema } from "./schema";
 
 /**
  * Public room management functionality for the messaging plugin
@@ -75,7 +76,8 @@ export class PublicRoomManager {
     roomId: string
   ): Promise<any[]> {
     try {
-      const localStorageKey = `publicRoom_messages_${roomId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.publicRooms.localStorage(roomId);
       const storedMessages = localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
@@ -106,7 +108,8 @@ export class PublicRoomManager {
     message: any
   ): Promise<void> {
     try {
-      const localStorageKey = `publicRoom_messages_${roomId}`;
+      // **IMPROVED: Use schema for localStorage key**
+      const localStorageKey = MessagingSchema.publicRooms.localStorage(roomId);
       const existingMessages = JSON.parse(
         localStorage.getItem(localStorageKey) || "[]"
       );
@@ -150,8 +153,8 @@ export class PublicRoomManager {
         return;
       }
 
-      // **FIXED: Use the correct path where messages are actually sent**
-      const messagesPath = `room_${roomId}`;
+      // **IMPROVED: Use schema for room messages path**
+      const messagesPath = MessagingSchema.publicRooms.messages(roomId);
       const roomMessagesNode = this.core.db.gun.get(messagesPath);
 
       // **FIXED: Only listen for NEW messages, not existing ones**
@@ -342,8 +345,8 @@ export class PublicRoomManager {
         isActive: true,
       };
 
-      // Store room data in GunDB
-      const roomsNode = this.core.db.gun.get("public_rooms");
+      // **IMPROVED: Use schema for public rooms collection**
+      const roomsNode = this.core.db.gun.get(MessagingSchema.collections.publicRooms);
       await new Promise<void>((resolve, reject) => {
         roomsNode.get(roomId).put(roomData, (ack: any) => {
           if (ack.err) {
@@ -373,7 +376,8 @@ export class PublicRoomManager {
 
     return new Promise((resolve) => {
       const rooms: PublicRoomData[] = [];
-      const roomsNode = this.core.db.gun.get("public_rooms");
+      // **IMPROVED: Use schema for public rooms collection**
+      const roomsNode = this.core.db.gun.get(MessagingSchema.collections.publicRooms);
 
       roomsNode.map().on((roomData: any, roomId: string) => {
         if (roomData && roomData.name && roomData.isActive !== false) {
@@ -408,7 +412,8 @@ export class PublicRoomManager {
     }
 
     return new Promise((resolve) => {
-      const roomsNode = this.core.db.gun.get("public_rooms");
+      // **IMPROVED: Use schema for public rooms collection**
+      const roomsNode = this.core.db.gun.get(MessagingSchema.collections.publicRooms);
 
       roomsNode.get(roomId).on((roomData: any) => {
         if (roomData && roomData.name && roomData.isActive !== false) {
@@ -440,7 +445,8 @@ export class PublicRoomManager {
     }
 
     this._isDiscoveringRooms = true;
-    const roomsNode = this.core.db.gun.get("public_rooms");
+    // **IMPROVED: Use schema for public rooms collection**
+    const roomsNode = this.core.db.gun.get(MessagingSchema.collections.publicRooms);
 
     this.roomDiscoveryListener = roomsNode
       .map()
@@ -479,7 +485,7 @@ export class PublicRoomManager {
       const roomsNode = this.core.db.gun.get("public_rooms");
       const roomNode = roomsNode.get(roomId);
 
-      // Get current room data
+      // **IMPROVED: Get current room data**
       const currentData = await new Promise<any>((resolve) => {
         roomNode.on((data: any) => resolve(data));
       });
@@ -763,7 +769,8 @@ export class PublicRoomManager {
     let safePath: string;
 
     if (type === "public") {
-      safePath = `room_${path}`;
+      // **IMPROVED: Use schema for public room path**
+      safePath = MessagingSchema.publicRooms.messages(path);
     } else if (type === "group") {
       safePath = path;
     } else {

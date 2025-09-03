@@ -1,5 +1,6 @@
 import { ShogunCore } from "shogun-core";
 import { MessageData, EncryptedMessage } from "./types";
+import { MessagingSchema } from "./schema";
 
 /**
  * Encryption utilities for the messaging plugin

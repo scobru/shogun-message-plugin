@@ -7,6 +7,7 @@ import { GroupManager } from "./groupManager";
 import { PublicRoomManager } from "./publicRoomManager";
 import { TokenRoomManager } from "./tokenRoomManager";
 import { sendToGunDB, createSafePath, createConversationPath } from "./utils";
+import { MessagingSchema } from "./schema";
 
 /**
  * Messaging plugin for Shogun SDK - Protocol layer only
@@ -169,14 +170,8 @@ export class MessagingPlugin extends BasePlugin {
         }
 
         const senderPub = currentUserPair.pub;
-        const messageId = (() => {
-          const bytes = new Uint8Array(8);
-          (globalThis as any)?.crypto?.getRandomValues?.(bytes);
-          const rand = Array.from(bytes, (b) =>
-            b.toString(16).padStart(2, "0")
-          ).join("");
-          return `msg_${Date.now()}_${rand}`;
-        })();
+        // **IMPROVED: Use schema utility for message ID generation**
+        const messageId = this._generateMessageId();
 
         // Create the complete message
         const messageData: any = {
@@ -698,15 +693,42 @@ export class MessagingPlugin extends BasePlugin {
 
   /**
    * Publishes the user's epub (needed for others to message this user)
+   * This method can be called without parameters to auto-publish the current user's epub,
+   * or with a specific epub string to publish that value
    */
-  public async publishUserEpub(): Promise<{
+  public async publishUserEpub(epub?: string): Promise<{
     success: boolean;
     error?: string;
   }> {
     return this.safeOperation(async () => {
       try {
-        await this.encryptionManager.ensureUserEpubPublished();
-        return { success: true };
+        if (epub) {
+          // Publish the provided epub
+          const userPub = this.core.db.user?.is?.pub;
+          if (!userPub) {
+            return { success: false, error: "User public key not available" };
+          }
+
+          // **IMPROVED: Use schema for user epub path**
+          const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
+          
+          await new Promise<void>((resolve, reject) => {
+            userEpubNode.put(epub, (ack: any) => {
+              if (ack.err) {
+                reject(new Error(ack.err));
+              } else {
+                resolve();
+              }
+            });
+          });
+
+          console.log("✅ User epub published successfully");
+          return { success: true };
+        } else {
+          // Auto-publish using encryption manager
+          await this.encryptionManager.ensureUserEpubPublished();
+          return { success: true };
+        }
       } catch (error: any) {
         return {
           success: false,
@@ -1184,9 +1206,10 @@ export class MessagingPlugin extends BasePlugin {
 
           // Try to find and remove from all possible conversation paths
           const possiblePaths = [
-            `conversation_${currentUserPub}_${messageId}`,
-            `messages_${currentUserPub}_${messageId}`,
-            `chat_${currentUserPub}_${messageId}`,
+                    // **IMPROVED: Use schema for conversation paths**
+        MessagingSchema.privateMessages.conversation(currentUserPub, messageId),
+        MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, "messages"),
+        MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, "chat"),
           ];
 
           possiblePaths.forEach((path) => {
@@ -1313,12 +1336,10 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   /**
-   * Helper method to create conversation ID
+   * Helper method to create conversation ID using schema
    */
   private createConversationId(user1Pub: string, user2Pub: string): string {
-    // Sort pub keys to ensure consistent conversation ID
-    const sortedPubs = [user1Pub, user2Pub].sort();
-    return `conversation_${sortedPubs[0]}_${sortedPubs[1]}`;
+    return this._createConversationId(user1Pub, user2Pub);
   }
 
   /**
@@ -1724,31 +1745,31 @@ export class MessagingPlugin extends BasePlugin {
         return;
       }
 
-      // Listen to current user's messages path for incoming messages
-      const currentUserMessagesPath = `${currentUserPub}/messages`;
+      // **IMPROVED: Use centralized schema for consistent path generation**
+      const currentUserMessagesPath = MessagingSchema.privateMessages.legacy.userMessages(currentUserPub);
       
       console.log("🔧 startListeningToLegacyPaths: Listening to:", currentUserMessagesPath);
 
-      // Set up listener for new messages
+      // Set up listener for new messages using schema-based paths
       const messagesNode = this.core.db.gun.get(currentUserMessagesPath);
       
       messagesNode.map().on((dateData: any, date: string) => {
         if (dateData && typeof date === "string" && date !== "_") {
-          // Listen to messages in this date
-          const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
+          // **IMPROVED: Use schema for date-specific message path**
+          const dateMessagesPath = MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, date);
           const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
           
           dateMessagesNode.map().on((messageData: any, messageId: string) => {
             if (messageData && typeof messageData === "object" && messageId !== "_") {
-              // Only process messages from/to this contact
-              if (messageData.senderPub === contactPub || messageData.recipientPub === contactPub) {
+              // **IMPROVED: Enhanced message filtering using schema validation**
+              if (this._isValidLegacyMessage(messageData, currentUserPub, contactPub)) {
                 console.log("🔧 startListeningToLegacyPaths: New message received:", messageId);
                 
-                // Call the callback with the message
-                callback({
-                  ...messageData,
-                  date: date
-                });
+                // **IMPROVED: Use schema utility for message processing**
+                const processedMessage = this._processLegacyMessage(messageData, messageId, date);
+                
+                // Call the callback with the processed message
+                callback(processedMessage);
               }
             }
           });
@@ -1780,5 +1801,688 @@ export class MessagingPlugin extends BasePlugin {
     }
   }
 
+  // ============================================================================
+  // 🔧 PRIVATE HELPER METHODS (using schema)
+  // ============================================================================
+
+  /**
+   * **NEW: Validates legacy message data using schema validation**
+   */
+  private _isValidLegacyMessage(messageData: any, currentUserPub: string, contactPub: string): boolean {
+    // Check if message has required fields
+    if (!messageData || typeof messageData !== "object") {
+      return false;
+    }
+
+    // Check if message is from/to the current contact
+    const isFromContact = messageData.senderPub === contactPub;
+    const isToContact = messageData.recipientPub === contactPub;
+    const isFromCurrentUser = messageData.senderPub === currentUserPub;
+    const isToCurrentUser = messageData.recipientPub === currentUserPub;
+
+    // Message must be either from contact to current user, or from current user to contact
+    return (isFromContact && isToCurrentUser) || (isFromCurrentUser && isToContact);
+  }
+
+  /**
+   * **NEW: Processes legacy message data using schema utilities**
+   */
+  private _processLegacyMessage(messageData: any, messageId: string, date: string): any {
+    // Use schema utility for date formatting if needed
+    const formattedDate = MessagingSchema.utils.formatDate(new Date(date));
+    
+    // Return processed message with consistent structure
+    return {
+      ...messageData,
+      id: messageId,
+      date: formattedDate,
+      timestamp: messageData.timestamp || Date.now(),
+      processed: true
+    };
+  }
+
+  /**
+   * **NEW: Creates conversation ID using schema utility**
+   */
+  private _createConversationId(user1Pub: string, user2Pub: string): string {
+    return MessagingSchema.utils.createConversationId(user1Pub, user2Pub);
+  }
+
+  /**
+   * **NEW: Generates message ID using schema utility**
+   */
+  private _generateMessageId(): string {
+    return MessagingSchema.utils.generateMessageId();
+  }
+
+  /**
+   * **NEW: Generates group ID using schema utility**
+   */
+  private _generateGroupId(): string {
+    return MessagingSchema.utils.generateGroupId();
+  }
+
+  /**
+   * **NEW: Generates token room ID using schema utility**
+   */
+  private _generateTokenRoomId(): string {
+    return MessagingSchema.utils.generateTokenRoomId();
+  }
+
+  /**
+   * **NEW: Generates public room ID using schema utility**
+   */
+  private _generatePublicRoomId(): string {
+    return MessagingSchema.utils.generatePublicRoomId();
+  }
+
+  // ============================================================================
+  // 🔍 USER SEARCH & MANAGEMENT FUNCTIONALITY (from hooks)
+  // ============================================================================
+
+  // **NEW: User Search Functionality from useUserSearch hook**
+  
+  /**
+   * Search for user by username
+   * Implements the same logic as useUserSearch hook
+   */
+  public async searchUser(username: string): Promise<{
+    alias: string;
+    epub: string;
+    pub: string;
+  } | null> {
+    if (!username.trim()) {
+      throw new Error("Please enter a username to search");
+    }
+
+    if (!this.core.isLoggedIn()) {
+      throw new Error("User not logged in");
+    }
+
+    try {
+      console.log(`🔍 Searching for user: "${username}"`);
+
+      // **IMPROVED: Use schema for username mapping path**
+      const usernamesNode = this.core.db.gun.get(MessagingSchema.users.usernames());
+      
+      // Try to get user data from username mapping
+      const userData = await new Promise<any>((resolve) => {
+        usernamesNode.get(username).on((data: any) => {
+          if (data && data.pub) {
+            resolve(data);
+          } else {
+            resolve(null);
+          }
+        });
+      });
+
+      if (userData && userData.pub) {
+        console.log("✅ User found via username mapping:", userData);
+        return {
+          alias: userData.alias || username,
+          epub: userData.epub || "",
+          pub: userData.pub
+        };
+      }
+
+      // Fallback: search in users collection
+      console.log("🔍 Username mapping not found, searching users collection...");
+      const usersNode = this.core.db.gun.get(MessagingSchema.collections.users);
+      
+      const foundUser = await new Promise<any>((resolve) => {
+        usersNode.map().on((userData: any, userId: string) => {
+          if (userData && userData.alias === username && userData.pub) {
+            resolve({ ...userData, pub: userId });
+          }
+        });
+        
+        // Resolve after a short delay if no user found
+        setTimeout(() => resolve(null), 2000);
+      });
+
+      if (foundUser) {
+        console.log("✅ User found in users collection:", foundUser);
+        return {
+          alias: foundUser.alias,
+          epub: foundUser.epub || "",
+          pub: foundUser.pub
+        };
+      }
+
+      console.log("❌ User not found");
+      return null;
+    } catch (error) {
+      console.error("❌ Error searching for user:", error);
+      throw error;
+    }
+  }
+
+  // **NEW: Messages Count Functionality from useMessagesCount hook**
+  
+  /**
+   * Get message count for a specific user
+   * Implements the same logic as useMessagesCount hook
+   */
+  public async getMessagesCount(contactPub: string): Promise<number> {
+    if (!this.core.isLoggedIn()) {
+      return 0;
+    }
+
+    try {
+      // **IMPROVED: Use schema for conversation path**
+      const conversationPath = MessagingSchema.privateMessages.conversation(
+        this.core.db.user?.is?.pub || "",
+        contactPub
+      );
+      
+      const conversationNode = this.core.db.gun.get(conversationPath);
+      
+      let messageCount = 0;
+      await new Promise<void>((resolve) => {
+        conversationNode.map().on(() => {
+          messageCount++;
+        });
+        
+        // Resolve after a short delay to count messages
+        setTimeout(() => resolve(), 1000);
+      });
+
+      return messageCount;
+    } catch (error) {
+      console.error("❌ Error getting message count:", error);
+      return 0;
+    }
+  }
+
+  /**
+   * Check if a user is available (has epub key)
+   * Implements the same logic as useMessagesCount hook
+   */
+  public async isUserAvailable(userPub: string): Promise<boolean> {
+    if (!this.core.isLoggedIn()) {
+      return false;
+    }
+
+    try {
+      // **IMPROVED: Use schema for user epub path**
+      const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
+      
+      const hasEpub = await new Promise<boolean>((resolve) => {
+        userEpubNode.on((epub: any) => {
+          resolve(!!epub);
+        });
+        
+        // Resolve after a short delay
+        setTimeout(() => resolve(false), 2000);
+      });
+
+      return hasEpub;
+    } catch (error) {
+      console.error("❌ Error checking user availability:", error);
+      return false;
+    }
+  }
+
+  // **NEW: User Registration Functionality from useUserRegistration hook**
+  
+  /**
+   * Register user data (alias, epub, pub)
+   * Implements the same logic as useUserRegistration hook
+   */
+  public async registerUserData(
+    alias: string,
+    epub: string,
+    pub: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!this.core.isLoggedIn()) {
+      return { success: false, error: "User not logged in" };
+    }
+
+    if (!alias || !epub || !pub) {
+      return { success: false, error: "Missing required user data" };
+    }
+
+    try {
+      const userData = { alias, epub, pub };
+      
+      // Store in users collection
+      // **IMPROVED: Use schema for users collection**
+      const usersNode = this.core.db.gun.get(MessagingSchema.collections.users);
+      await new Promise<void>((resolve, reject) => {
+        usersNode.get(pub).put(userData, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(ack.err));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // Store in username mapping for search
+      // **IMPROVED: Use schema for username mapping**
+      const usernameMappingNode = this.core.db.gun.get(MessagingSchema.users.usernameMapping(alias));
+      await new Promise<void>((resolve, reject) => {
+        usernameMappingNode.put(userData, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(ack.err));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      console.log("✅ User data registered successfully");
+      return { success: true };
+    } catch (error: any) {
+      console.error("❌ Error registering user data:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // **NEW: Encryption Management Functionality from useEncryption hook**
+  
+  /**
+   * Get user's encryption public key (epub)
+   * Implements the same logic as useEncryption hook
+   */
+  public async getUserEpub(userPub: string): Promise<string | null> {
+    if (!this.core.isLoggedIn()) {
+      return null;
+    }
+
+    try {
+      // **IMPROVED: Use schema for user epub path**
+      const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
+      
+      const epub = await new Promise<string | null>((resolve) => {
+        userEpubNode.on((epubData: any) => {
+          if (epubData && typeof epubData === "string") {
+            resolve(epubData);
+          } else {
+            resolve(null);
+          }
+        });
+        
+        // Resolve after a short delay
+        setTimeout(() => resolve(null), 2000);
+      });
+
+      return epub;
+
+    } catch (error) {
+      console.error("❌ Error getting user epub:", error);
+      return null;
+    }
+  }
+
+  // ============================================================================
+  // 🔐 COMPLETE USERNAME MANAGEMENT (from hooks)
+  // ============================================================================
+
+  /**
+   * **NEW: Register username for current user**
+   * Implements the same logic as useUserRegistration hook
+   */
+  public async registerUsername(username: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return { success: false, error: "User not logged in" };
+    }
+
+    if (!username || username.trim().length < 3) {
+      return { success: false, error: "Username must be at least 3 characters" };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return { success: false, error: "User pair not available" };
+      }
+
+      // Check if username is available
+      const isAvailable = await this.isUsernameAvailable(username);
+      if (!isAvailable) {
+        return { success: false, error: `Username "${username}" is already taken` };
+      }
+
+      // Save username mapping (shogun/usernames/username)
+      const usernameRef = this.core.db.gun
+        .get(MessagingSchema.collections.usernames)
+        .get(username);
+
+      await new Promise<void>((resolve, reject) => {
+        usernameRef.put(
+          {
+            pub: currentUserPair.pub,
+            epub: currentUserPair.epub,
+            timestamp: Date.now(),
+          },
+          (ack: any) => {
+            if (ack.err) {
+              reject(new Error(`Failed to save username mapping: ${ack.err}`));
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+
+      // Save protocol username (shogun/usernames/userPub)
+      const protocolUsernameRef = this.core.db.gun
+        .get(MessagingSchema.collections.usernames)
+        .get(currentUserPair.pub);
+
+      await new Promise<void>((resolve, reject) => {
+        protocolUsernameRef.put(username, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(`Failed to save protocol username: ${ack.err}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // Update user profile with username
+      const userRef = this.core.db.gun
+        .get(MessagingSchema.collections.users)
+        .get(currentUserPair.pub);
+
+      await new Promise<void>((resolve, reject) => {
+        userRef.put(
+          {
+            alias: username,
+            pub: currentUserPair.pub,
+            epub: currentUserPair.epub,
+            updatedAt: Date.now(),
+          },
+          (ack: any) => {
+            if (ack.err) {
+              reject(new Error(`Failed to update user profile: ${ack.err}`));
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to register username",
+      };
+    }
+  }
+
+  /**
+   * **NEW: Update username for current user**
+   */
+  public async updateUsername(newUsername: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return { success: false, error: "User not logged in" };
+    }
+
+    if (!newUsername || newUsername.trim().length < 3) {
+      return { success: false, error: "Username must be at least 3 characters" };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return { success: false, error: "User pair not available" };
+      }
+
+      // Check if new username is available
+      const isAvailable = await this.isUsernameAvailable(newUsername);
+      if (!isAvailable) {
+        return { success: false, error: `Username "${newUsername}" is already taken` };
+      }
+
+      // Get current username
+      const currentUsername = await this.getUsername(currentUserPair.pub);
+      if (currentUsername) {
+        // Remove old username mapping
+        const oldUsernameRef = this.core.db.gun
+          .get(MessagingSchema.collections.usernames)
+          .get(currentUsername);
+
+        await new Promise<void>((resolve, reject) => {
+          oldUsernameRef.put(null, (ack: any) => {
+            if (ack.err) {
+              console.warn(`Warning: Could not remove old username: ${ack.err}`);
+            }
+            resolve();
+          });
+        });
+      }
+
+      // Register new username
+      return await this.registerUsername(newUsername);
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to update username",
+      };
+    }
+  }
+
+  /**
+   * **NEW: Delete username for current user**
+   */
+  public async deleteUsername(): Promise<{ success: boolean; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return { success: false, error: "User not logged in" };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return { success: false, error: "User pair not available" };
+      }
+
+      // Get current username
+      const currentUsername = await this.getUsername(currentUserPair.pub);
+      if (!currentUsername) {
+        return { success: false, error: "No username to delete" };
+      }
+
+      // Remove username mapping
+      const usernameRef = this.core.db.gun
+        .get(MessagingSchema.collections.usernames)
+        .get(currentUsername);
+
+      await new Promise<void>((resolve, reject) => {
+        usernameRef.put(null, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(`Failed to remove username mapping: ${ack.err}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // Remove protocol username
+      const protocolUsernameRef = this.core.db.gun
+        .get(MessagingSchema.collections.usernames)
+        .get(currentUserPair.pub);
+
+      await new Promise<void>((resolve, reject) => {
+        protocolUsernameRef.put(null, (ack: any) => {
+          if (ack.err) {
+            reject(new Error(`Failed to remove protocol username: ${ack.err}`));
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      // Update user profile to remove username
+      const userRef = this.core.db.gun
+        .get(MessagingSchema.collections.users)
+        .get(currentUserPair.pub);
+
+      await new Promise<void>((resolve, reject) => {
+        userRef.put(
+          {
+            alias: null,
+            pub: currentUserPair.pub,
+            epub: currentUserPair.epub,
+            updatedAt: Date.now(),
+          },
+          (ack: any) => {
+            if (ack.err) {
+              reject(new Error(`Failed to update user profile: ${ack.err}`));
+            } else {
+              resolve();
+            }
+          }
+        );
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to delete username",
+      };
+    }
+  }
+
+  /**
+   * **NEW: Get username for a user**
+   */
+  public async getUsername(userPub: string): Promise<string | null> {
+    if (!userPub) return null;
+
+    try {
+      return new Promise<string | null>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve(null);
+        }, 5000);
+
+        this.core.db.gun
+          .get(MessagingSchema.collections.usernames)
+          .get(userPub)
+          .once((username: any) => {
+            clearTimeout(timeout);
+            if (username && typeof username === "string") {
+              resolve(username);
+            } else {
+              resolve(null);
+            }
+          });
+      });
+    } catch (error) {
+      console.error("Error getting username:", error);
+      return null;
+    }
+  }
+
+  /**
+   * **NEW: Check if username is available**
+   */
+  public async isUsernameAvailable(username: string): Promise<boolean> {
+    if (!username || username.trim().length < 3) return false;
+
+    try {
+      return new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve(false);
+        }, 3000);
+
+        this.core.db.gun
+          .get(MessagingSchema.collections.usernames)
+          .get(username)
+          .once((mapping: any) => {
+            clearTimeout(timeout);
+            // Username is available if no mapping exists or mapping has no pub
+            const available = !mapping || !mapping.pub;
+            resolve(available);
+          });
+      });
+    } catch (error) {
+      console.error("Error checking username availability:", error);
+      return false;
+    }
+  }
+
+  /**
+   * **NEW: Validate username format**
+   */
+  public validateUsername(username: string): { isValid: boolean; error?: string } {
+    if (!username || username.trim().length < 3) {
+      return { isValid: false, error: "Username must be at least 3 characters" };
+    }
+
+    if (username.length > 20) {
+      return { isValid: false, error: "Username must be 20 characters or less" };
+    }
+
+    // Username should be alphanumeric and underscores only
+    const usernameRegex = /^[a-zA-Z0-9_]+$/;
+    if (!usernameRegex.test(username)) {
+      return { isValid: false, error: "Username can only contain letters, numbers, and underscores" };
+    }
+
+    return { isValid: true };
+  }
+
+  /**
+   * **NEW: Generate random username**
+   */
+  public generateRandomUsername(): string {
+    const adjectives = [
+      "Swift", "Bright", "Calm", "Wise", "Bold", "Gentle", "Quick", "Warm", "Cool", "Smart",
+      "Brave", "Clever", "Fierce", "Kind", "Lucky", "Mighty", "Noble", "Proud", "Swift", "Wise"
+    ];
+    const nouns = [
+      "Wolf", "Eagle", "Lion", "Bear", "Fox", "Hawk", "Tiger", "Dragon", "Phoenix", "Panther",
+      "Falcon", "Jaguar", "Lynx", "Owl", "Puma", "Raven", "Shark", "Viper", "Wolf", "Zebra"
+    ];
+
+    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const number = Math.floor(Math.random() * 1000);
+
+    return `${adjective}${noun}${number}`;
+  }
+
+  /**
+   * **NEW: Auto-register user after login**
+   */
+  public async autoRegisterUser(): Promise<{ success: boolean; error?: string }> {
+    if (!this.core.isLoggedIn() || !this.core.db.user) {
+      return { success: false, error: "User not logged in" };
+    }
+
+    try {
+      const currentUserPair = (this.core.db.user as any)._?.sea;
+      if (!currentUserPair) {
+        return { success: false, error: "User pair not available" };
+      }
+
+      // Check if user is already registered
+      const existingUser = await this.core.db.getUserData("alias");
+      if (existingUser && existingUser !== currentUserPair.pub) {
+        // User already has a username, just ensure profile is up to date
+        await this.registerUserData(existingUser, currentUserPair.epub, currentUserPair.pub);
+        return { success: true };
+      }
+
+      // Generate a random username if none exists
+      const randomUsername = this.generateRandomUsername();
+      const result = await this.registerUsername(randomUsername);
+      
+      if (result.success) {
+        console.log(`✅ Auto-registered user with username: ${randomUsername}`);
+      }
+      
+      return result;
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Auto-registration failed",
+      };
+    }
+  }
 
 }

@@ -20,6 +20,7 @@ import {
 } from "./utils";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
+import { MessagingSchema } from "./schema";
 import { Observable, from, of, throwError, timer } from "rxjs";
 import {
   map,
@@ -2189,7 +2190,8 @@ export class MessageProcessor {
         `msg_${contactPub}`,
         `messages_${contactPub}`,
         `chat_${contactPub}`,
-        `conversation_${contactPub}`,
+        // **IMPROVED: Use schema for conversation path**
+        MessagingSchema.privateMessages.conversation(currentUserPair.pub, contactPub),
         `private_${contactPub}`,
         `direct_${contactPub}`,
         contactPub, // Direct pub key

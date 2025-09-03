@@ -1,7 +1,9 @@
 import { ShogunCore } from "shogun-core";
+import { MessagingSchema } from "./schema";
 
 /**
  * Utility functions for the messaging plugin
+ * Ora utilizza MessagingSchema per consistenza
  */
 
 /**
@@ -22,34 +24,24 @@ function randomHex(byteLength: number = 8): string {
 }
 
 /**
- * Generates a unique message ID (timestamp + secure random hex)
+ * Generates a unique message ID using schema
  */
 export function generateMessageId(): string {
-  const timestamp = Date.now();
-  const random = randomHex(8);
-  return `msg_${timestamp}_${random}`;
+  return MessagingSchema.utils.generateMessageId();
 }
 
 /**
- * Generates a unique group ID
+ * Generates a unique group ID using schema
  */
 export function generateGroupId(): string {
-  const timestamp = Date.now();
-  const random = randomHex(8);
-  return `${timestamp}_${random}`;
+  return MessagingSchema.utils.generateGroupId();
 }
 
 /**
- * Creates a simple, safe path for GunDB using a hash of the public key
+ * Creates a safe path for GunDB operations using schema
  */
 export function createSafePath(pubKey: string, prefix: string = "msg"): string {
-  if (!pubKey || typeof pubKey !== "string") {
-    throw new Error("Invalid public key for path creation");
-  }
-
-  // Create a simple hash of the public key
-  const hash = simpleHash(pubKey);
-  return `${prefix}_${hash}`;
+  return MessagingSchema.privateMessages.recipient(pubKey);
 }
 
 /**
@@ -66,26 +58,20 @@ export function simpleHash(str: string): string {
 }
 
 /**
- * Creates a unique conversation identifier
+ * Creates a unique conversation identifier using schema
  */
 export function createConversationId(user1: string, user2: string): string {
-  // Sort the public keys to ensure consistent conversation ID regardless of sender/receiver
-  const sorted = [user1, user2].sort();
-  return `${sorted[0]}_${sorted[1]}`;
+  return MessagingSchema.utils.createConversationId(user1, user2);
 }
 
 /**
- * Creates a conversation path that both users can access
- * This ensures bidirectional message storage and retrieval
+ * Creates a conversation path for GunDB using schema
  */
 export function createConversationPath(
   user1Pub: string,
   user2Pub: string
 ): string {
-  // Sort the public keys to ensure consistent conversation path regardless of sender/receiver
-  const sorted = [user1Pub, user2Pub].sort();
-  const conversationId = `${sorted[0]}_${sorted[1]}`;
-  return `conversation_${simpleHash(conversationId)}`;
+  return MessagingSchema.privateMessages.conversation(user1Pub, user2Pub);
 }
 
 /**
@@ -189,20 +175,21 @@ export async function sendToGunDB(
 
   let safePath: string;
 
-  if (type === "public") {
-    safePath = `room_${path}`;
-  } else if (type === "group") {
-    safePath = path;
-  } else {
-    // For private messages, if the path already looks like a conversation path, use it as is
-    if (path.startsWith("conversation_")) {
+      if (type === "public") {
+      // **IMPROVED: Use schema for public room path**
+      safePath = MessagingSchema.publicRooms.messages(path);
+    } else if (type === "group") {
       safePath = path;
-    } else if (senderPub) {
-      safePath = createConversationPath(senderPub, path);
     } else {
-      safePath = createSafePath(path);
+      // For private messages, if the path already looks like a conversation path, use it as is
+      if (path.startsWith("conversation_")) {
+        safePath = path;
+      } else if (senderPub) {
+        safePath = createConversationPath(senderPub, path);
+      } else {
+        safePath = createSafePath(path);
+      }
     }
-  }
 
   const messageNode = core.db.gun.get(safePath);
 
