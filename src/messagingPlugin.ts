@@ -1711,44 +1711,52 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Start listening to legacy paths for real-time compatibility**
    * This function sets up listeners on the legacy paths without breaking existing functionality
-   * @param contactPub The contact's public key (currently unused, kept for API compatibility)
+   * @param currentUserPub The current user's public key (for compatibility, but not used for filtering)
    * @param callback Function to call when a new message is received
    */
-  public startListeningToLegacyPaths(contactPub: string, callback: (message: any) => void): void {
+  public startListeningToLegacyPaths(currentUserPub: string, callback: (message: any) => void): void {
     try {
       console.log("🔧 startListeningToLegacyPaths: Setting up legacy path listeners");
 
-      const currentUserPub = this.core.db.user?.is?.pub;
-      if (!currentUserPub) {
+      const currentUserPubFromCore = this.core.db.user?.is?.pub;
+      if (!currentUserPubFromCore) {
         console.warn("⚠️ startListeningToLegacyPaths: User not logged in");
         return;
       }
 
-      // **IMPROVED: Use centralized schema for consistent path generation**
-      const currentUserMessagesPath = MessagingSchema.privateMessages.legacy.userMessages(currentUserPub);
+      // **FIXED: Listen to the current user's message paths (where they are the recipient)**
+      // NOT to the sender's paths
+      const currentUserMessagesPath = `${currentUserPubFromCore}/messages`;
       
-      console.log("🔧 startListeningToLegacyPaths: Listening to:", currentUserMessagesPath);
+      console.log("🔧 startListeningToLegacyPaths: Listening to recipient paths:", currentUserMessagesPath);
 
-      // Set up listener for new messages using schema-based paths
+      // Set up listener for new messages using direct path listening
       const messagesNode = this.core.db.gun.get(currentUserMessagesPath);
       
+      // Listen for new dates being added
       messagesNode.map().on((dateData: any, date: string) => {
         if (dateData && typeof date === "string" && date !== "_") {
-          // **IMPROVED: Use schema for date-specific message path**
-          const dateMessagesPath = MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, date);
+          console.log("🔧 startListeningToLegacyPaths: New date detected:", date);
+          
+          // Listen for messages in this date
+          const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
           const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
           
           dateMessagesNode.map().on((messageData: any, messageId: string) => {
             if (messageData && typeof messageData === "object" && messageId !== "_") {
+              console.log("🔧 startListeningToLegacyPaths: New message detected:", messageId);
+              
               // **IMPROVED: Enhanced message filtering using schema validation**
-              if (this._isValidLegacyMessage(messageData, currentUserPub)) {
-                console.log("🔧 startListeningToLegacyPaths: New message received:", messageId);
+              if (this._isValidLegacyMessage(messageData, currentUserPubFromCore)) {
+                console.log("🔧 startListeningToLegacyPaths: Valid message received:", messageId);
                 
                 // **IMPROVED: Use schema utility for message processing**
                 const processedMessage = this._processLegacyMessage(messageData, messageId, date);
                 
                 // Call the callback with the processed message
                 callback(processedMessage);
+              } else {
+                console.log("🔧 startListeningToLegacyPaths: Message filtered out (not valid):", messageId);
               }
             }
           });
