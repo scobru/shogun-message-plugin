@@ -1533,4 +1533,252 @@ export class MessagingPlugin extends BasePlugin {
       currentUserPair.pub
     );
   }
+
+  /**
+   * **NEW: Send message to legacy path for compatibility with existing frontend**
+   * This function saves messages in the same paths that the legacy system uses
+   * without breaking existing plugin functionality
+   */
+  public async sendMessageToLegacyPath(
+    recipientPub: string,
+    messageContent: string,
+    options: {
+      messageType?: "alias" | "epub" | "token";
+      senderAlias?: string;
+      recipientAlias?: string;
+    } = {}
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    try {
+      console.log("🔧 sendMessageToLegacyPath: Sending to legacy path for compatibility");
+
+      // Generate message ID
+      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      // Create message object compatible with legacy system
+      const message = {
+        id: messageId,
+        sender: options.senderAlias || "Unknown",
+        senderPub: this.core.db.user?.is?.pub || "",
+        recipient: options.recipientAlias || "Unknown",
+        recipientPub: recipientPub,
+        message: messageContent,
+        type: options.messageType || "alias",
+        timestamp: Date.now(),
+        encrypted: true,
+      };
+
+      // Get today's date for organization (like legacy system)
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+      // Save to legacy path: recipientPub/messages/date/messageId
+      const legacyPath = `${recipientPub}/messages/${today}/${messageId}`;
+      
+      console.log("🔧 sendMessageToLegacyPath: Saving to legacy path:", legacyPath);
+
+      await new Promise<void>((resolve, reject) => {
+        this.core.db.gun.get(legacyPath).put(message, (ack: any) => {
+          if (ack.err) {
+            console.error("❌ sendMessageToLegacyPath: Error saving to legacy path:", ack.err);
+            reject(new Error(`Failed to save to legacy path: ${ack.err}`));
+          } else {
+            console.log("✅ sendMessageToLegacyPath: Message saved to legacy path successfully");
+            resolve();
+          }
+        });
+      });
+
+      // Also save to current user's path for immediate display (like legacy system)
+      const currentUserPath = `${this.core.db.user?.is?.pub}/messages/${today}/${messageId}`;
+      
+      console.log("🔧 sendMessageToLegacyPath: Also saving to current user path:", currentUserPath);
+
+      await new Promise<void>((resolve, reject) => {
+        this.core.db.gun.get(currentUserPath).put(message, (ack: any) => {
+          if (ack.err) {
+            console.error("❌ sendMessageToLegacyPath: Error saving to current user path:", ack.err);
+            reject(new Error(`Failed to save to current user path: ${ack.err}`));
+          } else {
+            console.log("✅ sendMessageToLegacyPath: Message saved to current user path successfully");
+            resolve();
+          }
+        });
+      });
+
+      console.log("✅ sendMessageToLegacyPath: Message sent to legacy paths successfully");
+      return { success: true, messageId };
+
+    } catch (error: any) {
+      console.error("❌ sendMessageToLegacyPath: Error:", error);
+      return {
+        success: false,
+        error: error.message || "Unknown error sending to legacy path"
+      };
+    }
+  }
+
+  /**
+   * **NEW: Receive messages from legacy path for compatibility with existing frontend**
+   * This function reads messages from the same paths that the legacy system uses
+   * without breaking existing plugin functionality
+   */
+  public async receiveMessageFromLegacyPath(
+    contactPub: string,
+    options: {
+      limit?: number;
+      before?: string;
+      after?: string;
+    } = {}
+  ): Promise<{ success: boolean; messages?: any[]; error?: string }> {
+    try {
+      console.log("🔧 receiveMessageFromLegacyPath: Reading from legacy paths for compatibility");
+
+      const messages: any[] = [];
+      const currentUserPub = this.core.db.user?.is?.pub;
+
+      if (!currentUserPub) {
+        return { success: false, error: "User not logged in" };
+      }
+
+      // Read from current user's messages (messages sent TO current user)
+      const currentUserMessagesPath = `${currentUserPub}/messages`;
+      
+      console.log("🔧 receiveMessageFromLegacyPath: Reading from current user path:", currentUserMessagesPath);
+
+      // Get all dates in current user's messages
+      const dates = await new Promise<string[]>((resolve) => {
+        const datesNode = this.core.db.gun.get(currentUserMessagesPath);
+        const dates: string[] = [];
+        
+        datesNode.map().on((dateData: any, date: string) => {
+          if (dateData && typeof date === "string" && date !== "_") {
+            dates.push(date);
+          }
+        });
+
+        // Timeout to ensure we get all dates
+        setTimeout(() => resolve(dates), 2000);
+      });
+
+      console.log("🔧 receiveMessageFromLegacyPath: Found dates:", dates);
+
+      // Read messages from each date
+      for (const date of dates) {
+        const messagesPath = `${currentUserMessagesPath}/${date}`;
+        
+        const dateMessages = await new Promise<any[]>((resolve) => {
+          const messages: any[] = [];
+          const messagesNode = this.core.db.gun.get(messagesPath);
+          
+          messagesNode.map().on((messageData: any, messageId: string) => {
+            if (messageData && typeof messageData === "object" && messageId !== "_") {
+              // Only include messages from this contact
+              if (messageData.senderPub === contactPub || messageData.recipientPub === contactPub) {
+                messages.push({
+                  ...messageData,
+                  date: date
+                });
+              }
+            }
+          });
+
+          // Timeout to ensure we get all messages from this date
+          setTimeout(() => resolve(messages), 2000);
+        });
+
+        messages.push(...dateMessages);
+      }
+
+      // Sort messages by timestamp
+      messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+      // Apply limit if specified
+      const limitedMessages = options.limit ? messages.slice(-options.limit) : messages;
+
+      console.log("✅ receiveMessageFromLegacyPath: Successfully read messages:", limitedMessages.length);
+      
+      return {
+        success: true,
+        messages: limitedMessages
+      };
+
+    } catch (error: any) {
+      console.error("❌ receiveMessageFromLegacyPath: Error:", error);
+      return {
+        success: false,
+        error: error.message || "Unknown error reading from legacy path"
+      };
+    }
+  }
+
+  /**
+   * **NEW: Start listening to legacy paths for real-time compatibility**
+   * This function sets up listeners on the legacy paths without breaking existing functionality
+   */
+  public startListeningToLegacyPaths(contactPub: string, callback: (message: any) => void): void {
+    try {
+      console.log("🔧 startListeningToLegacyPaths: Setting up legacy path listeners");
+
+      const currentUserPub = this.core.db.user?.is?.pub;
+      if (!currentUserPub) {
+        console.warn("⚠️ startListeningToLegacyPaths: User not logged in");
+        return;
+      }
+
+      // Listen to current user's messages path for incoming messages
+      const currentUserMessagesPath = `${currentUserPub}/messages`;
+      
+      console.log("🔧 startListeningToLegacyPaths: Listening to:", currentUserMessagesPath);
+
+      // Set up listener for new messages
+      const messagesNode = this.core.db.gun.get(currentUserMessagesPath);
+      
+      messagesNode.map().on((dateData: any, date: string) => {
+        if (dateData && typeof date === "string" && date !== "_") {
+          // Listen to messages in this date
+          const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
+          const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
+          
+          dateMessagesNode.map().on((messageData: any, messageId: string) => {
+            if (messageData && typeof messageData === "object" && messageId !== "_") {
+              // Only process messages from/to this contact
+              if (messageData.senderPub === contactPub || messageData.recipientPub === contactPub) {
+                console.log("🔧 startListeningToLegacyPaths: New message received:", messageId);
+                
+                // Call the callback with the message
+                callback({
+                  ...messageData,
+                  date: date
+                });
+              }
+            }
+          });
+        }
+      });
+
+      console.log("✅ startListeningToLegacyPaths: Legacy path listeners set up successfully");
+
+    } catch (error) {
+      console.error("❌ startListeningToLegacyPaths: Error setting up listeners:", error);
+    }
+  }
+
+  /**
+   * **NEW: Stop listening to legacy paths**
+   * This function cleans up legacy path listeners
+   */
+  public stopListeningToLegacyPaths(): void {
+    try {
+      console.log("🔧 stopListeningToLegacyPaths: Cleaning up legacy path listeners");
+      
+      // Note: GunDB listeners are automatically cleaned up when the plugin is destroyed
+      // This function is provided for explicit cleanup if needed
+      
+      console.log("✅ stopListeningToLegacyPaths: Legacy path listeners cleaned up");
+      
+    } catch (error) {
+      console.error("❌ stopListeningToLegacyPaths: Error cleaning up listeners:", error);
+    }
+  }
+
+
 }

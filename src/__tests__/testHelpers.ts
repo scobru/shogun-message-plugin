@@ -2,9 +2,6 @@ import { ShogunCore } from "shogun-core";
 import { MessagingPlugin } from "../messagingPlugin";
 import Gun from "gun";
 
-import "gun/lib/rmem";
-import "gun/lib/yson.js";
-
 // Jest globals
 declare const jest: any;
 declare const test: any;
@@ -26,12 +23,11 @@ export interface TestUser {
  */
 export function createTestShogunCore(): ShogunCore {
   // Create a minimal Gun instance for testing
-  const gunInstance = new Gun();
+  const gunInstance = Gun();
 
   return new ShogunCore({
-    gunInstance,
-    authToken: `shogun2025-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-  });
+    gunInstance
+    });
 }
 
 /**

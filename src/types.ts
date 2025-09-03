@@ -280,6 +280,7 @@ export interface UserPair {
 export interface MessageDataRaw {
   from?: string;
   data?: string; // encrypted data
+  content?: string;
   timestamp?: number;
   id?: string;
   _deleted?: boolean;
@@ -327,5 +328,24 @@ export interface DebugGunDBResult {
     path: string;
     data: DebugPathItem[];
   };
+  error?: string;
+}
+
+// **NEW: Legacy compatibility types**
+export interface LegacyMessageOptions {
+  messageType?: "alias" | "epub" | "token";
+  senderAlias?: string;
+  recipientAlias?: string;
+}
+
+export interface LegacyMessageResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
+export interface LegacyMessagesResult {
+  success: boolean;
+  messages?: any[];
   error?: string;
 }

@@ -41,3 +41,13 @@ export {
 
 // **PRODUCTION: Export production-ready utilities**
 // ProtocolAdapter removed - was unused
+
+// Export MessageData type
+export type { MessageData } from "./types";
+
+// **NEW: Export legacy compatibility functions**
+export type {
+  LegacyMessageOptions,
+  LegacyMessageResult,
+  LegacyMessagesResult
+} from "./types";

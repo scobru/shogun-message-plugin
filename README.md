@@ -93,6 +93,96 @@ if (result.success) {
 }
 ```
 
+##### **NEW: Legacy Compatibility Functions**
+
+###### `sendMessageToLegacyPath(recipientPub: string, messageContent: string, options?: LegacyMessageOptions): Promise<LegacyMessageResult>`
+
+Sends a message to legacy paths for compatibility with existing frontend systems.
+
+**Parameters:**
+
+- `recipientPub` (string): The recipient's public key
+- `messageContent` (string): The message content to send
+- `options` (LegacyMessageOptions, optional): Additional options for legacy compatibility
+
+**Returns:** Promise<LegacyMessageResult>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.sendMessageToLegacyPath(
+  "recipient_public_key_here",
+  "Hello from legacy path!",
+  {
+    messageType: "alias",
+    senderAlias: "Alice",
+    recipientAlias: "Bob"
+  }
+);
+
+if (result.success) {
+  console.log("Message sent to legacy path:", result.messageId);
+} else {
+  console.error("Failed to send to legacy path:", result.error);
+}
+```
+
+###### `receiveMessageFromLegacyPath(contactPub: string, options?: { limit?: number; before?: string; after?: string }): Promise<LegacyMessagesResult>`
+
+Receives messages from legacy paths for compatibility with existing frontend systems.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `options` (object, optional): Options for message retrieval
+
+**Returns:** Promise<LegacyMessagesResult>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.receiveMessageFromLegacyPath(
+  "contact_public_key_here",
+  { limit: 50 }
+);
+
+if (result.success) {
+  console.log("Messages received from legacy path:", result.messages?.length);
+} else {
+  console.error("Failed to receive from legacy path:", result.error);
+}
+```
+
+###### `startListeningToLegacyPaths(contactPub: string, callback: (message: any) => void): void`
+
+Starts listening to legacy paths for real-time message compatibility.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `callback` (function): Function to call when a new message is received
+
+**Example:**
+
+```typescript
+messagingPlugin.startListeningToLegacyPaths(
+  "contact_public_key_here",
+  (message) => {
+    console.log("New message from legacy path:", message);
+  }
+);
+```
+
+###### `stopListeningToLegacyPaths(): void`
+
+Stops listening to legacy paths.
+
+**Example:**
+
+```typescript
+messagingPlugin.stopListeningToLegacyPaths();
+```
+
 ##### `sendGroupMessage(groupId: string, messageContent: string): Promise<MessageSendResult>`
 
 Sends a message to a group chat using Multiple People Encryption (MPE).
@@ -237,6 +327,51 @@ if (result.success) {
 }
 ```
 
+#### `addGroupListener(groupId: string): void`
+
+Adds a listener for group messages.
+
+**Parameters:**
+
+- `groupId` (string): The group identifier
+
+**Example:**
+
+```typescript
+messagingPlugin.addGroupListener("group_123");
+```
+
+#### `removeGroupListener(groupId: string): void`
+
+Removes a group message listener.
+
+**Parameters:**
+
+- `groupId` (string): The group identifier
+
+**Example:**
+
+```typescript
+messagingPlugin.removeGroupListener("group_123");
+```
+
+#### `hasGroupListener(groupId: string): boolean`
+
+Checks if a group has an active listener.
+
+**Parameters:**
+
+- `groupId` (string): The group identifier
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const hasListener = messagingPlugin.hasGroupListener("group_123");
+console.log("Group has listener:", hasListener);
+```
+
 ### Room Management
 
 #### `createPublicRoom(roomName: string, description?: string): Promise<{ success: boolean; roomData?: any; error?: string }>`
@@ -287,6 +422,38 @@ const result = await messagingPlugin.createTokenRoom(
 if (result.success) {
   console.log("Token room created:", result.roomData.id);
 }
+```
+
+#### `startRoomDiscovery(): void`
+
+Starts the room discovery process.
+
+**Example:**
+
+```typescript
+messagingPlugin.startRoomDiscovery();
+```
+
+#### `stopRoomDiscovery(): void`
+
+Stops the room discovery process.
+
+**Example:**
+
+```typescript
+messagingPlugin.stopRoomDiscovery();
+```
+
+#### `initializeDefaultRooms(): Promise<void>`
+
+Initializes default public rooms if none exist.
+
+**Returns:** Promise<void>
+
+**Example:**
+
+```typescript
+await messagingPlugin.initializeDefaultRooms();
 ```
 
 ### Message Listening
@@ -386,7 +553,584 @@ const tokenResult = await messagingPlugin.joinChat(
   "token_xyz"
 );
 if (tokenResult.success) {
-  console.log("Joined token room:", tokenResult.chatData);
+  console.log("Joined token room:", result.chatData);
+}
+```
+
+### Protocol Listeners
+
+#### `startProtocolListeners(): void`
+
+Starts all protocol-level listeners.
+
+**Example:**
+
+```typescript
+messagingPlugin.startProtocolListeners();
+```
+
+#### `stopProtocolListeners(): void`
+
+Stops all protocol-level listeners.
+
+**Example:**
+
+```typescript
+messagingPlugin.stopProtocolListeners();
+```
+
+#### `areProtocolListenersActive(): boolean`
+
+Checks if protocol listeners are active.
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const areActive = messagingPlugin.areProtocolListenersActive();
+console.log("Protocol listeners active:", areActive);
+```
+
+#### `areGroupListenersActive(): boolean`
+
+Checks if group listeners are active.
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const areActive = messagingPlugin.areGroupListenersActive();
+console.log("Group listeners active:", areActive);
+```
+
+#### `areTokenRoomListenersActive(): boolean`
+
+Checks if token room listeners are active.
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const areActive = messagingPlugin.areTokenRoomListenersActive();
+console.log("Token room listeners active:", areActive);
+```
+
+### Raw Message Handling
+
+#### `onRawMessage(callback: any): void`
+
+Registers a callback for raw messages.
+
+**Parameters:**
+
+- `callback` (function): Function to call when a raw message is received
+
+**Example:**
+
+```typescript
+messagingPlugin.onRawMessage((message) => {
+  console.log("Raw message received:", message);
+});
+```
+
+#### `onRawPublicMessage(callback: any): void`
+
+Registers a callback for raw public messages.
+
+**Parameters:**
+
+- `callback` (function): Function to call when a raw public message is received
+
+**Example:**
+
+```typescript
+messagingPlugin.onRawPublicMessage((message) => {
+  console.log("Raw public message received:", message);
+});
+```
+
+#### `onRawTokenRoomMessage(callback: any): void`
+
+Registers a callback for raw token room messages.
+
+**Parameters:**
+
+- `callback` (function): Function to call when a raw token room message is received
+
+**Example:**
+
+```typescript
+messagingPlugin.onRawTokenRoomMessage((message) => {
+  console.log("Raw token room message received:", message);
+});
+```
+
+#### `onRawGroupMessage(callback: any): void`
+
+Registers a callback for raw group messages.
+
+**Parameters:**
+
+- `callback` (function): Function to call when a raw group message is received
+
+**Example:**
+
+```typescript
+messagingPlugin.onRawGroupMessage((message) => {
+  console.log("Raw group message received:", message);
+});
+```
+
+### Public Room Management
+
+#### `startListeningPublic(roomId: string): void`
+
+Starts listening to a specific public room.
+
+**Parameters:**
+
+- `roomId` (string): The public room identifier
+
+**Example:**
+
+```typescript
+messagingPlugin.startListeningPublic("general_chat");
+```
+
+#### `stopListeningPublic(): void`
+
+Stops listening to public rooms.
+
+**Example:**
+
+```typescript
+messagingPlugin.stopListeningPublic();
+```
+
+#### `stopListeningToPublicRoom(roomId: string): void`
+
+Stops listening to a specific public room.
+
+**Parameters:**
+
+- `roomId` (string): The public room identifier
+
+**Example:**
+
+```typescript
+messagingPlugin.stopListeningToPublicRoom("general_chat");
+```
+
+#### `hasActivePublicRoomListener(roomId: string): boolean`
+
+Checks if a specific public room has an active listener.
+
+**Parameters:**
+
+- `roomId` (string): The public room identifier
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const hasListener = messagingPlugin.hasActivePublicRoomListener("general_chat");
+console.log("Public room has listener:", hasListener);
+```
+
+#### `getPublicRoomMessages(roomId: string, limit?: number): Promise<any[]>`
+
+Gets public room messages from localStorage.
+
+**Parameters:**
+
+- `roomId` (string): The public room identifier
+- `limit` (number, optional): Maximum number of messages to retrieve
+
+**Returns:** Promise<any[]>
+
+**Example:**
+
+```typescript
+const messages = await messagingPlugin.getPublicRoomMessages("general_chat", 50);
+console.log("Public room messages:", messages);
+```
+
+#### `removePublicMessageListener(callback: any): void`
+
+Removes a specific public message listener callback.
+
+**Parameters:**
+
+- `callback` (function): The callback to remove
+
+**Example:**
+
+```typescript
+messagingPlugin.removePublicMessageListener(myCallbackFunction);
+```
+
+### Token Room Management
+
+#### `startListeningTokenRooms(): void`
+
+Starts listening to token rooms.
+
+**Example:**
+
+```typescript
+messagingPlugin.startListeningTokenRooms();
+```
+
+#### `stopListeningTokenRooms(): void`
+
+Stops listening to token rooms.
+
+**Example:**
+
+```typescript
+messagingPlugin.stopListeningTokenRooms();
+```
+
+#### `startTokenRoomMessageListener(roomId: string): Promise<void>`
+
+Starts listening to messages from a specific token room.
+
+**Parameters:**
+
+- `roomId` (string): The token room identifier
+
+**Returns:** Promise<void>
+
+**Example:**
+
+```typescript
+await messagingPlugin.startTokenRoomMessageListener("private_room_456");
+```
+
+#### `stopTokenRoomMessageListener(roomId: string): Promise<void>`
+
+Stops listening to messages from a specific token room.
+
+**Parameters:**
+
+- `roomId` (string): The token room identifier
+
+**Returns:** Promise<void>
+
+**Example:**
+
+```typescript
+await messagingPlugin.stopTokenRoomMessageListener("private_room_456");
+```
+
+#### `getTokenRoomMessages(roomId: string): Promise<any[]>`
+
+Gets messages from a specific token room.
+
+**Parameters:**
+
+- `roomId` (string): The token room identifier
+
+**Returns:** Promise<any[]>
+
+**Example:**
+
+```typescript
+const messages = await messagingPlugin.getTokenRoomMessages("private_room_456");
+console.log("Token room messages:", messages);
+```
+
+#### `deleteTokenRoom(roomId: string): Promise<{ success: boolean; error?: string }>`
+
+Deletes a token room.
+
+**Parameters:**
+
+- `roomId` (string): The token room identifier
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.deleteTokenRoom("private_room_456");
+if (result.success) {
+  console.log("Token room deleted successfully");
+} else {
+  console.error("Failed to delete token room:", result.error);
+}
+```
+
+### Conversation Management
+
+#### `clearConversation(contactPub: string): Promise<{ success: boolean; error?: string }>`
+
+Clears all messages from a conversation.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.clearConversation("contact_public_key");
+if (result.success) {
+  console.log("Conversation cleared successfully");
+} else {
+  console.error("Failed to clear conversation:", result.error);
+}
+```
+
+#### `setMessagesToNull(contactPub: string): Promise<{ success: boolean; error?: string }>`
+
+Sets all messages in a conversation to null.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.setMessagesToNull("contact_public_key");
+if (result.success) {
+  console.log("Messages set to null successfully");
+} else {
+  console.error("Failed to set messages to null:", result.error);
+}
+```
+
+#### `clearSingleMessage(contactPub: string, messageId: string): Promise<{ success: boolean; error?: string }>`
+
+Clears a single message from a conversation.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `messageId` (string): The message identifier
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.clearSingleMessage("contact_public_key", "message_123");
+if (result.success) {
+  console.log("Message cleared successfully");
+} else {
+  console.error("Failed to clear message:", result.error);
+}
+```
+
+#### `verifyConversationCleared(contactPub: string): Promise<{ success: boolean; error?: string }>`
+
+Verifies that a conversation has been cleared.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.verifyConversationCleared("contact_public_key");
+if (result.success) {
+  console.log("Conversation cleared verification successful");
+} else {
+  console.error("Conversation cleared verification failed:", result.error);
+}
+```
+
+#### `markConversationAsCleared(from: string, to: string): void`
+
+Marks a conversation as cleared.
+
+**Parameters:**
+
+- `from` (string): The sender's public key
+- `to` (string): The recipient's public key
+
+**Example:**
+
+```typescript
+messagingPlugin.markConversationAsCleared("sender_pub", "recipient_pub");
+```
+
+#### `isConversationCleared(from: string, to: string): boolean`
+
+Checks if a conversation is marked as cleared.
+
+**Parameters:**
+
+- `from` (string): The sender's public key
+- `to` (string): The recipient's public key
+
+**Returns:** boolean
+
+**Example:**
+
+```typescript
+const isCleared = messagingPlugin.isConversationCleared("sender_pub", "recipient_pub");
+console.log("Conversation is cleared:", isCleared);
+```
+
+#### `removeClearedConversation(from: string, to: string): void`
+
+Removes the cleared status from a conversation.
+
+**Parameters:**
+
+- `from` (string): The sender's public key
+- `to` (string): The recipient's public key
+
+**Example:**
+
+```typescript
+messagingPlugin.removeClearedConversation("sender_pub", "recipient_pub");
+```
+
+#### `resetClearedConversations(): void`
+
+Resets all cleared conversation statuses.
+
+**Example:**
+
+```typescript
+messagingPlugin.resetClearedConversations();
+```
+
+#### `resetClearedConversation(contactPub: string): void`
+
+Resets the cleared status for a specific contact.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Example:**
+
+```typescript
+messagingPlugin.resetClearedConversation("contact_public_key");
+```
+
+#### `reloadMessages(contactPub: string): Promise<any[]>`
+
+Reloads messages for a specific contact.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<any[]>
+
+**Example:**
+
+```typescript
+const messages = await messagingPlugin.reloadMessages("contact_public_key");
+console.log("Reloaded messages:", messages);
+```
+
+#### `loadExistingMessages(contactPub: string): Promise<any[]>`
+
+Loads existing messages for a specific contact.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<any[]>
+
+**Example:**
+
+```typescript
+const messages = await messagingPlugin.loadExistingMessages("contact_public_key");
+console.log("Existing messages:", messages);
+```
+
+### Message Content Management
+
+#### `setMessageContent(contactPub: string, messageId: string, newContent: string): Promise<{ success: boolean; error?: string }>`
+
+Updates the content of a specific message.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `messageId` (string): The message identifier
+- `newContent` (string): The new message content
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.setMessageContent(
+  "contact_public_key",
+  "message_123",
+  "Updated message content"
+);
+if (result.success) {
+  console.log("Message content updated successfully");
+} else {
+  console.error("Failed to update message content:", result.error);
+}
+```
+
+#### `removeMessage(contactPub: string, messageId: string): Promise<{ success: boolean; error?: string }>`
+
+Removes a specific message.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `messageId` (string): The message identifier
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.removeMessage("contact_public_key", "message_123");
+if (result.success) {
+  console.log("Message removed successfully");
+} else {
+  console.error("Failed to remove message:", result.error);
+}
+```
+
+#### `removeConversationMessages(contactPub: string, messageIds: string[]): Promise<{ success: boolean; error?: string }>`
+
+Removes multiple messages from a conversation.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+- `messageIds` (string[]): Array of message identifiers to remove
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.removeConversationMessages(
+  "contact_public_key",
+  ["message_123", "message_456"]
+);
+if (result.success) {
+  console.log("Messages removed successfully");
+} else {
+  console.error("Failed to remove messages:", result.error);
 }
 ```
 
@@ -437,6 +1181,223 @@ Retrieves data for a specific token room.
 ```typescript
 const roomData = await messagingPlugin.getTokenRoomData("room_456");
 console.log("Token room data:", roomData);
+```
+
+#### `getRecipientEpub(recipientPub: string): Promise<string>`
+
+Gets the encryption public key for a recipient.
+
+**Parameters:**
+
+- `recipientPub` (string): The recipient's public key
+
+**Returns:** Promise<string>
+
+**Example:**
+
+```typescript
+const epub = await messagingPlugin.getRecipientEpub("recipient_public_key");
+console.log("Recipient epub:", epub);
+```
+
+#### `publishUserEpub(): Promise<{ success: boolean; error?: string }>`
+
+Publishes the current user's encryption public key.
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.publishUserEpub();
+if (result.success) {
+  console.log("User epub published successfully");
+} else {
+  console.error("Failed to publish user epub:", result.error);
+}
+```
+
+#### `checkUserEpubAvailability(userPub: string): Promise<{ available: boolean; epub?: string; error?: string }>`
+
+Checks if a user's encryption public key is available.
+
+**Parameters:**
+
+- `userPub` (string): The user's public key
+
+**Returns:** Promise<{ available: boolean; epub?: string; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.checkUserEpubAvailability("user_public_key");
+if (result.available) {
+  console.log("User epub available:", result.epub);
+} else {
+  console.log("User epub not available");
+}
+```
+
+#### `getCurrentUserEpub(): string | null`
+
+Gets the current user's encryption public key.
+
+**Returns:** string | null
+
+**Example:**
+
+```typescript
+const epub = messagingPlugin.getCurrentUserEpub();
+if (epub) {
+  console.log("Current user epub:", epub);
+} else {
+  console.log("No epub available for current user");
+}
+```
+
+#### `joinTokenRoom(roomId: string, token: string): Promise<{ success: boolean; error?: string }>`
+
+Joins a token room with the provided token.
+
+**Parameters:**
+
+- `roomId` (string): The token room identifier
+- `token` (string): The token required for room access
+
+**Returns:** Promise<{ success: boolean; error?: string }>
+
+**Example:**
+
+```typescript
+const result = await messagingPlugin.joinTokenRoom("room_456", "access_token");
+if (result.success) {
+  console.log("Joined token room successfully");
+} else {
+  console.error("Failed to join token room:", result.error);
+}
+```
+
+### Debug and Development
+
+#### `debugGunDBStructure(recipientPub: string): Promise<any>`
+
+Debug utility to inspect GunDB structure for a recipient.
+
+**Parameters:**
+
+- `recipientPub` (string): The recipient's public key
+
+**Returns:** Promise<any>
+
+**Example:**
+
+```typescript
+const structure = await messagingPlugin.debugGunDBStructure("recipient_public_key");
+console.log("GunDB structure:", structure);
+```
+
+#### `debugMessagePaths(contactPub: string): Promise<void>`
+
+Debug utility to inspect message paths for a contact.
+
+**Parameters:**
+
+- `contactPub` (string): The contact's public key
+
+**Returns:** Promise<void>
+
+**Example:**
+
+```typescript
+await messagingPlugin.debugMessagePaths("contact_public_key");
+```
+
+#### `registerConversationPathListener(conversationPath: string): void`
+
+Registers a listener for a specific conversation path.
+
+**Parameters:**
+
+- `conversationPath` (string): The conversation path to listen to
+
+**Example:**
+
+```typescript
+messagingPlugin.registerConversationPathListener("conversation_path_here");
+```
+
+### Listener Status and Management
+
+#### `getListenerStatus(): { isListening: boolean; messageListenersCount: number; processedMessagesCount: number; hasActiveListener: boolean }`
+
+Gets the current status of all listeners.
+
+**Returns:** Object with listener status information
+
+**Example:**
+
+```typescript
+const status = messagingPlugin.getListenerStatus();
+console.log("Listener status:", {
+  isListening: status.isListening,
+  messageListenersCount: status.messageListenersCount,
+  processedMessagesCount: status.processedMessagesCount,
+  hasActiveListener: status.hasActiveListener
+});
+```
+
+### Cleanup and Resource Management
+
+#### `cleanup(): void`
+
+Performs cleanup operations and resource management.
+
+**Example:**
+
+```typescript
+messagingPlugin.cleanup();
+```
+
+### Testing and Development
+
+#### `groupManagerForTesting: GroupManager`
+
+Getter for accessing the group manager for testing purposes.
+
+**Example:**
+
+```typescript
+const groupManager = messagingPlugin.groupManagerForTesting;
+```
+
+#### `encryptionManagerForTesting: EncryptionManager`
+
+Getter for accessing the encryption manager for testing purposes.
+
+**Example:**
+
+```typescript
+const encryptionManager = messagingPlugin.encryptionManagerForTesting;
+```
+
+#### `tokenRoomManagerForTesting: TokenRoomManager`
+
+Getter for accessing the token room manager for testing purposes.
+
+**Example:**
+
+```typescript
+const tokenRoomManager = messagingPlugin.tokenRoomManagerForTesting;
+```
+
+#### `publicRoomManagerForTesting: PublicRoomManager`
+
+Getter for accessing the public room manager for testing purposes.
+
+**Example:**
+
+```typescript
+const publicRoomManager = messagingPlugin.publicRoomManagerForTesting;
 ```
 
 ## Types and Interfaces
@@ -513,6 +1474,23 @@ interface JoinChatResult {
   success: boolean;
   chatData?: any;
   error?: string;
+}
+```
+
+### MessageData
+
+```typescript
+interface MessageData {
+  from: string;
+  content: string;
+  timestamp: number;
+  id: string;
+  signature?: string;
+  roomId?: string; // For public room messages
+  isPublic?: boolean; // Flag to distinguish public from private messages
+  groupId?: string; // For group messages
+  isGroup?: boolean; // Flag to distinguish group messages
+  isEncrypted?: boolean; // Flag to indicate if the message was encrypted
 }
 ```
 
