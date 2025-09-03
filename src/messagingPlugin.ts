@@ -245,22 +245,11 @@ export class MessagingPlugin extends BasePlugin {
           "private"
         );
 
-        // Also send to sender's own path for immediate display
-        const senderPath = createSafePath(senderPub);
+        // **FIXED: Don't send to sender's own path - this creates confusion**
+        // The sender will receive the message through the listening system
+        // This prevents duplicate messages and ensures proper message flow
         console.log(
-          "🔍 sendMessage: Also sending to sender's path for immediate display:",
-          {
-            senderPath,
-            messageId,
-          }
-        );
-
-        await sendToGunDB(
-          this.core,
-          senderPath,
-          messageId,
-          encryptedMessageData,
-          "private"
+          "🔍 sendMessage: Message sent to conversation path, sender will receive via listener"
         );
 
         // **NEW: Immediately notify listeners with the sent message**
@@ -1608,22 +1597,10 @@ export class MessagingPlugin extends BasePlugin {
         });
       });
 
-      // Also save to current user's path for immediate display (like legacy system)
-      const currentUserPath = `${this.core.db.user?.is?.pub}/messages/${today}/${messageId}`;
-      
-      console.log("🔧 sendMessageToLegacyPath: Also saving to current user path:", currentUserPath);
-
-      await new Promise<void>((resolve, reject) => {
-        this.core.db.gun.get(currentUserPath).put(message, (ack: any) => {
-          if (ack.err) {
-            console.error("❌ sendMessageToLegacyPath: Error saving to current user path:", ack.err);
-            reject(new Error(`Failed to save to current user path: ${ack.err}`));
-          } else {
-            console.log("✅ sendMessageToLegacyPath: Message saved to current user path successfully");
-            resolve();
-          }
-        });
-      });
+      // **FIXED: Don't save to current user's path - this creates confusion**
+      // The sender will receive the message through the listening system
+      // This prevents duplicate messages and ensures proper message flow
+      console.log("🔧 sendMessageToLegacyPath: Message saved to recipient path only");
 
       console.log("✅ sendMessageToLegacyPath: Message sent to legacy paths successfully");
       return { success: true, messageId };
@@ -1734,6 +1711,8 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Start listening to legacy paths for real-time compatibility**
    * This function sets up listeners on the legacy paths without breaking existing functionality
+   * @param contactPub The contact's public key (currently unused, kept for API compatibility)
+   * @param callback Function to call when a new message is received
    */
   public startListeningToLegacyPaths(contactPub: string, callback: (message: any) => void): void {
     try {
@@ -1762,7 +1741,7 @@ export class MessagingPlugin extends BasePlugin {
           dateMessagesNode.map().on((messageData: any, messageId: string) => {
             if (messageData && typeof messageData === "object" && messageId !== "_") {
               // **IMPROVED: Enhanced message filtering using schema validation**
-              if (this._isValidLegacyMessage(messageData, currentUserPub, contactPub)) {
+              if (this._isValidLegacyMessage(messageData, currentUserPub)) {
                 console.log("🔧 startListeningToLegacyPaths: New message received:", messageId);
                 
                 // **IMPROVED: Use schema utility for message processing**
@@ -1808,20 +1787,23 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Validates legacy message data using schema validation**
    */
-  private _isValidLegacyMessage(messageData: any, currentUserPub: string, contactPub: string): boolean {
+  private _isValidLegacyMessage(messageData: any, currentUserPub: string): boolean {
     // Check if message has required fields
     if (!messageData || typeof messageData !== "object") {
       return false;
     }
 
-    // Check if message is from/to the current contact
-    const isFromContact = messageData.senderPub === contactPub;
-    const isToContact = messageData.recipientPub === contactPub;
-    const isFromCurrentUser = messageData.senderPub === currentUserPub;
+    // **FIXED: Check if message is destined for the current user**
+    // The current user should receive messages where they are the recipient
     const isToCurrentUser = messageData.recipientPub === currentUserPub;
-
-    // Message must be either from contact to current user, or from current user to contact
-    return (isFromContact && isToCurrentUser) || (isFromCurrentUser && isToContact);
+    
+    // Also check if it's a message from the current user (for display purposes)
+    const isFromCurrentUser = messageData.senderPub === currentUserPub;
+    
+    // Message is valid if it's either:
+    // 1. Destined for the current user (they are the recipient)
+    // 2. Sent by the current user (for display in their message list)
+    return isToCurrentUser || isFromCurrentUser;
   }
 
   /**
