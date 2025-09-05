@@ -699,8 +699,10 @@ export class MessagingPlugin extends BasePlugin {
           }
 
           // **IMPROVED: Use schema for user epub path**
-          const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
-          
+          const userEpubNode = this.core.db.gun.get(
+            MessagingSchema.users.epub(userPub)
+          );
+
           await new Promise<void>((resolve, reject) => {
             userEpubNode.put(epub, (ack: any) => {
               if (ack.err) {
@@ -1071,57 +1073,6 @@ export class MessagingPlugin extends BasePlugin {
     }, "reloadMessages");
   }
 
-  /**
-   * **NEW: Debug function to explore GunDB structure**
-   */
-  public async debugGunDBStructure(recipientPub: string): Promise<any> {
-    return this.safeOperation(async () => {
-      return this.messageProcessor.debugGunDBStructure(recipientPub);
-    }, "debugGunDBStructure");
-  }
-
-  /**
-   * **NEW: Set message content to null in GunDB**
-   */
-  public async setMessageContent(
-    messageId: string,
-    content: string | null
-  ): Promise<{ success: boolean; error?: string }> {
-    return this.safeOperation(async () => {
-      try {
-        console.log("🗑️ Setting message content in GunDB:", {
-          messageId,
-          content: content === null ? "null" : "string",
-        });
-
-        if (!this.core?.db) {
-          return { success: false, error: "GunDB not available" };
-        }
-
-        // Get the message reference in GunDB
-        const messageRef = this.core.db
-          .get(`~${this.core.db.user?.is?.pub}`)
-          .get("messages")
-          .get(messageId);
-
-        if (!messageRef) {
-          return { success: false, error: "Message not found in GunDB" };
-        }
-
-        // Set the content to null
-        messageRef.put({ content });
-
-        console.log("✅ Message content set to null in GunDB:", messageId);
-        return { success: true };
-      } catch (error) {
-        console.error("❌ Error setting message content to null:", error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : "Unknown error",
-        };
-      }
-    }, "setMessageContent");
-  }
 
   /**
    * **IMPROVED: Remove a message from GunDB completely**
@@ -1195,10 +1146,19 @@ export class MessagingPlugin extends BasePlugin {
 
           // Try to find and remove from all possible conversation paths
           const possiblePaths = [
-                    // **IMPROVED: Use schema for conversation paths**
-        MessagingSchema.privateMessages.conversation(currentUserPub, messageId),
-        MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, "messages"),
-        MessagingSchema.privateMessages.legacy.userMessagesByDate(currentUserPub, "chat"),
+            // **IMPROVED: Use schema for conversation paths**
+            MessagingSchema.privateMessages.conversation(
+              currentUserPub,
+              messageId
+            ),
+            MessagingSchema.privateMessages.legacy.userMessagesByDate(
+              currentUserPub,
+              "messages"
+            ),
+            MessagingSchema.privateMessages.legacy.userMessagesByDate(
+              currentUserPub,
+              "chat"
+            ),
           ];
 
           possiblePaths.forEach((path) => {
@@ -1549,8 +1509,9 @@ export class MessagingPlugin extends BasePlugin {
    * This function saves messages in the same paths that the legacy system uses
    * without breaking existing plugin functionality
    */
-  public async sendMessageToLegacyPath(
+  public async sendMessageDirect(
     recipientPub: string,
+    recipientEpub: string,
     messageContent: string,
     options: {
       messageType?: "alias" | "epub" | "token";
@@ -1559,10 +1520,26 @@ export class MessagingPlugin extends BasePlugin {
     } = {}
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      console.log("🔧 sendMessageToLegacyPath: Sending to legacy path for compatibility");
+      console.log(
+        "🔧 sendMessageToLegacyPath: Sending to legacy path for compatibility"
+      );
 
       // Generate message ID
       const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      const sharedSecret = (await this.core.db.sea.secret(
+        recipientEpub,
+        (this.core.db.user as any)?._?.sea
+      )) as string;
+
+      if (!sharedSecret) {
+        throw new Error("Impossibile derivare il secret condiviso");
+      }
+
+      const encryptedMessage = await this.core.db.sea.encrypt(
+        messageContent,
+        sharedSecret
+      );
 
       // Create message object compatible with legacy system
       const message = {
@@ -1571,45 +1548,58 @@ export class MessagingPlugin extends BasePlugin {
         senderPub: this.core.db.user?.is?.pub || "",
         recipient: options.recipientAlias || "Unknown",
         recipientPub: recipientPub,
-        message: messageContent,
+        message: encryptedMessage,
         type: options.messageType || "alias",
         timestamp: Date.now(),
         encrypted: true,
       };
 
-      // Get today's date for organization (like legacy system)
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      // Get today's date bucket for organization (safe key)
+      const today = MessagingSchema.utils.formatDate(new Date());
 
-      // Save to legacy path: recipientPub/messages/date/messageId
-      const legacyPath = `${recipientPub}/messages/${today}/${messageId}`;
-      
-      console.log("🔧 sendMessageToLegacyPath: Saving to legacy path:", legacyPath);
+      console.log(
+        "🔧 sendMessageToLegacyPath: Saving to legacy path (nested nodes):",
+        { recipientPub, today, messageId }
+      );
 
       await new Promise<void>((resolve, reject) => {
-        this.core.db.gun.get(legacyPath).put(message, (ack: any) => {
-          if (ack.err) {
-            console.error("❌ sendMessageToLegacyPath: Error saving to legacy path:", ack.err);
-            reject(new Error(`Failed to save to legacy path: ${ack.err}`));
-          } else {
-            console.log("✅ sendMessageToLegacyPath: Message saved to legacy path successfully");
-            resolve();
-          }
-        });
+        this.core.db.gun
+          .get(recipientPub)
+          .get(MessagingSchema.collections.messages)
+          .get(today)
+          .get(messageId)
+          .put(message, (ack: any) => {
+            if (ack.err) {
+              console.error(
+                "❌ sendMessageToLegacyPath: Error saving to legacy path:",
+                ack.err
+              );
+              reject(new Error(`Failed to save to legacy path: ${ack.err}`));
+            } else {
+              console.log(
+                "✅ sendMessageToLegacyPath: Message saved to legacy path successfully"
+              );
+              resolve();
+            }
+          });
       });
 
       // **FIXED: Don't save to current user's path - this creates confusion**
       // The sender will receive the message through the listening system
       // This prevents duplicate messages and ensures proper message flow
-      console.log("🔧 sendMessageToLegacyPath: Message saved to recipient path only");
+      console.log(
+        "🔧 sendMessageToLegacyPath: Message saved to recipient path only"
+      );
 
-      console.log("✅ sendMessageToLegacyPath: Message sent to legacy paths successfully");
+      console.log(
+        "✅ sendMessageToLegacyPath: Message sent to legacy paths successfully"
+      );
       return { success: true, messageId };
-
     } catch (error: any) {
       console.error("❌ sendMessageToLegacyPath: Error:", error);
       return {
         success: false,
-        error: error.message || "Unknown error sending to legacy path"
+        error: error.message || "Unknown error sending to legacy path",
       };
     }
   }
@@ -1619,8 +1609,7 @@ export class MessagingPlugin extends BasePlugin {
    * This function reads messages from the same paths that the legacy system uses
    * without breaking existing plugin functionality
    */
-  public async receiveMessageFromLegacyPath(
-    contactPub: string,
+  public async receiveMessageDirect(
     options: {
       limit?: number;
       before?: string;
@@ -1628,7 +1617,9 @@ export class MessagingPlugin extends BasePlugin {
     } = {}
   ): Promise<{ success: boolean; messages?: any[]; error?: string }> {
     try {
-      console.log("🔧 receiveMessageFromLegacyPath: Reading from legacy paths for compatibility");
+      console.log(
+        "🔧 receiveMessageFromLegacyPath: Reading from legacy paths for compatibility"
+      );
 
       const messages: any[] = [];
       const currentUserPub = this.core.db.user?.is?.pub;
@@ -1638,15 +1629,18 @@ export class MessagingPlugin extends BasePlugin {
       }
 
       // Read from current user's messages (messages sent TO current user)
-      const currentUserMessagesPath = `${currentUserPub}/messages`;
-      
-      console.log("🔧 receiveMessageFromLegacyPath: Reading from current user path:", currentUserMessagesPath);
+      const currentUserMessagesPath = `${currentUserPub}/${MessagingSchema.collections.messages}`;
+
+      console.log(
+        "🔧 receiveMessageFromLegacyPath: Reading from current user path:",
+        currentUserMessagesPath
+      );
 
       // Get all dates in current user's messages
       const dates = await new Promise<string[]>((resolve) => {
         const datesNode = this.core.db.gun.get(currentUserMessagesPath);
         const dates: string[] = [];
-        
+
         datesNode.map().on((dateData: any, date: string) => {
           if (dateData && typeof date === "string" && date !== "_") {
             dates.push(date);
@@ -1662,20 +1656,21 @@ export class MessagingPlugin extends BasePlugin {
       // Read messages from each date
       for (const date of dates) {
         const messagesPath = `${currentUserMessagesPath}/${date}`;
-        
+
         const dateMessages = await new Promise<any[]>((resolve) => {
           const messages: any[] = [];
           const messagesNode = this.core.db.gun.get(messagesPath);
-          
+
           messagesNode.map().on((messageData: any, messageId: string) => {
-            if (messageData && typeof messageData === "object" && messageId !== "_") {
-              // Only include messages from this contact
-              if (messageData.senderPub === contactPub || messageData.recipientPub === contactPub) {
-                messages.push({
-                  ...messageData,
-                  date: date
-                });
-              }
+            if (
+              messageData &&
+              typeof messageData === "object" &&
+              messageId !== "_"
+            ) {
+              messages.push({
+                ...messageData,
+                date: date,
+              });
             }
           });
 
@@ -1690,20 +1685,24 @@ export class MessagingPlugin extends BasePlugin {
       messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
       // Apply limit if specified
-      const limitedMessages = options.limit ? messages.slice(-options.limit) : messages;
+      const limitedMessages = options.limit
+        ? messages.slice(-options.limit)
+        : messages;
 
-      console.log("✅ receiveMessageFromLegacyPath: Successfully read messages:", limitedMessages.length);
-      
+      console.log(
+        "✅ receiveMessageFromLegacyPath: Successfully read messages:",
+        limitedMessages.length
+      );
+
       return {
         success: true,
-        messages: limitedMessages
+        messages: limitedMessages,
       };
-
     } catch (error: any) {
       console.error("❌ receiveMessageFromLegacyPath: Error:", error);
       return {
         success: false,
-        error: error.message || "Unknown error reading from legacy path"
+        error: error.message || "Unknown error reading from legacy path",
       };
     }
   }
@@ -1714,9 +1713,11 @@ export class MessagingPlugin extends BasePlugin {
    * @param currentUserPub The current user's public key (for compatibility, but not used for filtering)
    * @param callback Function to call when a new message is received
    */
-  public startListeningToLegacyPaths(currentUserPub: string, callback: (message: any) => void): void {
+  public startListeningDirect(callback: (message: any) => void): void {
     try {
-      console.log("🔧 startListeningToLegacyPaths: Setting up legacy path listeners");
+      console.log(
+        "🔧 startListeningToLegacyPaths: Setting up legacy path listeners"
+      );
 
       const currentUserPubFromCore = this.core.db.user?.is?.pub;
       if (!currentUserPubFromCore) {
@@ -1726,47 +1727,76 @@ export class MessagingPlugin extends BasePlugin {
 
       // **FIXED: Listen to the current user's message paths (where they are the recipient)**
       // NOT to the sender's paths
-      const currentUserMessagesPath = `${currentUserPubFromCore}/messages`;
-      
-      console.log("🔧 startListeningToLegacyPaths: Listening to recipient paths:", currentUserMessagesPath);
+      const currentUserMessagesPath = `${currentUserPubFromCore}/${MessagingSchema.collections.messages}`;
+
+      console.log(
+        "🔧 startListeningToLegacyPaths: Listening to recipient paths:",
+        currentUserMessagesPath
+      );
 
       // Set up listener for new messages using direct path listening
       const messagesNode = this.core.db.gun.get(currentUserMessagesPath);
-      
+
       // Listen for new dates being added
       messagesNode.map().on((dateData: any, date: string) => {
         if (dateData && typeof date === "string" && date !== "_") {
-          console.log("🔧 startListeningToLegacyPaths: New date detected:", date);
-          
+          console.log(
+            "🔧 startListeningToLegacyPaths: New date detected:",
+            date
+          );
+
           // Listen for messages in this date
           const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
           const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
-          
+
           dateMessagesNode.map().on((messageData: any, messageId: string) => {
-            if (messageData && typeof messageData === "object" && messageId !== "_") {
-              console.log("🔧 startListeningToLegacyPaths: New message detected:", messageId);
-              
+            if (
+              messageData &&
+              typeof messageData === "object" &&
+              messageId !== "_"
+            ) {
+              console.log(
+                "🔧 startListeningToLegacyPaths: New message detected:",
+                messageId
+              );
+
               // **IMPROVED: Enhanced message filtering using schema validation**
-              if (this._isValidLegacyMessage(messageData, currentUserPubFromCore)) {
-                console.log("🔧 startListeningToLegacyPaths: Valid message received:", messageId);
-                
+              if (
+                this._isValidLegacyMessage(messageData, currentUserPubFromCore)
+              ) {
+                console.log(
+                  "🔧 startListeningToLegacyPaths: Valid message received:",
+                  messageId
+                );
+
                 // **IMPROVED: Use schema utility for message processing**
-                const processedMessage = this._processLegacyMessage(messageData, messageId, date);
-                
+                const processedMessage = this._processLegacyMessage(
+                  messageData,
+                  messageId,
+                  date
+                );
+
                 // Call the callback with the processed message
                 callback(processedMessage);
               } else {
-                console.log("🔧 startListeningToLegacyPaths: Message filtered out (not valid):", messageId);
+                console.log(
+                  "🔧 startListeningToLegacyPaths: Message filtered out (not valid):",
+                  messageId
+                );
               }
             }
           });
         }
       });
 
-      console.log("✅ startListeningToLegacyPaths: Legacy path listeners set up successfully");
-
+      console.log(
+        "✅ startListeningToLegacyPaths: Legacy path listeners set up successfully"
+      );
     } catch (error) {
-      console.error("❌ startListeningToLegacyPaths: Error setting up listeners:", error);
+      console.error(
+        "❌ startListeningToLegacyPaths: Error setting up listeners:",
+        error
+      );
     }
   }
 
@@ -1776,15 +1806,21 @@ export class MessagingPlugin extends BasePlugin {
    */
   public stopListeningToLegacyPaths(): void {
     try {
-      console.log("🔧 stopListeningToLegacyPaths: Cleaning up legacy path listeners");
-      
+      console.log(
+        "🔧 stopListeningToLegacyPaths: Cleaning up legacy path listeners"
+      );
+
       // Note: GunDB listeners are automatically cleaned up when the plugin is destroyed
       // This function is provided for explicit cleanup if needed
-      
-      console.log("✅ stopListeningToLegacyPaths: Legacy path listeners cleaned up");
-      
+
+      console.log(
+        "✅ stopListeningToLegacyPaths: Legacy path listeners cleaned up"
+      );
     } catch (error) {
-      console.error("❌ stopListeningToLegacyPaths: Error cleaning up listeners:", error);
+      console.error(
+        "❌ stopListeningToLegacyPaths: Error cleaning up listeners:",
+        error
+      );
     }
   }
 
@@ -1795,7 +1831,10 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Validates legacy message data using schema validation**
    */
-  private _isValidLegacyMessage(messageData: any, currentUserPub: string): boolean {
+  private _isValidLegacyMessage(
+    messageData: any,
+    currentUserPub: string
+  ): boolean {
     // Check if message has required fields
     if (!messageData || typeof messageData !== "object") {
       return false;
@@ -1804,10 +1843,10 @@ export class MessagingPlugin extends BasePlugin {
     // **FIXED: Check if message is destined for the current user**
     // The current user should receive messages where they are the recipient
     const isToCurrentUser = messageData.recipientPub === currentUserPub;
-    
+
     // Also check if it's a message from the current user (for display purposes)
     const isFromCurrentUser = messageData.senderPub === currentUserPub;
-    
+
     // Message is valid if it's either:
     // 1. Destined for the current user (they are the recipient)
     // 2. Sent by the current user (for display in their message list)
@@ -1817,17 +1856,21 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Processes legacy message data using schema utilities**
    */
-  private _processLegacyMessage(messageData: any, messageId: string, date: string): any {
+  private _processLegacyMessage(
+    messageData: any,
+    messageId: string,
+    date: string
+  ): any {
     // Use schema utility for date formatting if needed
     const formattedDate = MessagingSchema.utils.formatDate(new Date(date));
-    
+
     // Return processed message with consistent structure
     return {
       ...messageData,
       id: messageId,
       date: formattedDate,
       timestamp: messageData.timestamp || Date.now(),
-      processed: true
+      processed: true,
     };
   }
 
@@ -1871,7 +1914,7 @@ export class MessagingPlugin extends BasePlugin {
   // ============================================================================
 
   // **NEW: User Search Functionality from useUserSearch hook**
-  
+
   /**
    * Search for user by username
    * Implements the same logic as useUserSearch hook
@@ -1893,8 +1936,10 @@ export class MessagingPlugin extends BasePlugin {
       console.log(`🔍 Searching for user: "${username}"`);
 
       // **IMPROVED: Use schema for username mapping path**
-      const usernamesNode = this.core.db.gun.get(MessagingSchema.users.usernames());
-      
+      const usernamesNode = this.core.db.gun.get(
+        MessagingSchema.users.usernames()
+      );
+
       // Try to get user data from username mapping
       const userData = await new Promise<any>((resolve) => {
         usernamesNode.get(username).on((data: any) => {
@@ -1911,21 +1956,23 @@ export class MessagingPlugin extends BasePlugin {
         return {
           alias: userData.alias || username,
           epub: userData.epub || "",
-          pub: userData.pub
+          pub: userData.pub,
         };
       }
 
       // Fallback: search in users collection
-      console.log("🔍 Username mapping not found, searching users collection...");
+      console.log(
+        "🔍 Username mapping not found, searching users collection..."
+      );
       const usersNode = this.core.db.gun.get(MessagingSchema.collections.users);
-      
+
       const foundUser = await new Promise<any>((resolve) => {
         usersNode.map().on((userData: any, userId: string) => {
           if (userData && userData.alias === username && userData.pub) {
             resolve({ ...userData, pub: userId });
           }
         });
-        
+
         // Resolve after a short delay if no user found
         setTimeout(() => resolve(null), 2000);
       });
@@ -1935,7 +1982,7 @@ export class MessagingPlugin extends BasePlugin {
         return {
           alias: foundUser.alias,
           epub: foundUser.epub || "",
-          pub: foundUser.pub
+          pub: foundUser.pub,
         };
       }
 
@@ -1948,7 +1995,7 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   // **NEW: Messages Count Functionality from useMessagesCount hook**
-  
+
   /**
    * Get message count for a specific user
    * Implements the same logic as useMessagesCount hook
@@ -1964,15 +2011,15 @@ export class MessagingPlugin extends BasePlugin {
         this.core.db.user?.is?.pub || "",
         contactPub
       );
-      
+
       const conversationNode = this.core.db.gun.get(conversationPath);
-      
+
       let messageCount = 0;
       await new Promise<void>((resolve) => {
         conversationNode.map().on(() => {
           messageCount++;
         });
-        
+
         // Resolve after a short delay to count messages
         setTimeout(() => resolve(), 1000);
       });
@@ -1995,13 +2042,15 @@ export class MessagingPlugin extends BasePlugin {
 
     try {
       // **IMPROVED: Use schema for user epub path**
-      const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
-      
+      const userEpubNode = this.core.db.gun.get(
+        MessagingSchema.users.epub(userPub)
+      );
+
       const hasEpub = await new Promise<boolean>((resolve) => {
         userEpubNode.on((epub: any) => {
           resolve(!!epub);
         });
-        
+
         // Resolve after a short delay
         setTimeout(() => resolve(false), 2000);
       });
@@ -2014,7 +2063,7 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   // **NEW: User Registration Functionality from useUserRegistration hook**
-  
+
   /**
    * Register user data (alias, epub, pub)
    * Implements the same logic as useUserRegistration hook
@@ -2034,7 +2083,7 @@ export class MessagingPlugin extends BasePlugin {
 
     try {
       const userData = { alias, epub, pub };
-      
+
       // Store in users collection
       // **IMPROVED: Use schema for users collection**
       const usersNode = this.core.db.gun.get(MessagingSchema.collections.users);
@@ -2050,7 +2099,9 @@ export class MessagingPlugin extends BasePlugin {
 
       // Store in username mapping for search
       // **IMPROVED: Use schema for username mapping**
-      const usernameMappingNode = this.core.db.gun.get(MessagingSchema.users.usernameMapping(alias));
+      const usernameMappingNode = this.core.db.gun.get(
+        MessagingSchema.users.usernameMapping(alias)
+      );
       await new Promise<void>((resolve, reject) => {
         usernameMappingNode.put(userData, (ack: any) => {
           if (ack.err) {
@@ -2070,7 +2121,7 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   // **NEW: Encryption Management Functionality from useEncryption hook**
-  
+
   /**
    * Get user's encryption public key (epub)
    * Implements the same logic as useEncryption hook
@@ -2082,8 +2133,10 @@ export class MessagingPlugin extends BasePlugin {
 
     try {
       // **IMPROVED: Use schema for user epub path**
-      const userEpubNode = this.core.db.gun.get(MessagingSchema.users.epub(userPub));
-      
+      const userEpubNode = this.core.db.gun.get(
+        MessagingSchema.users.epub(userPub)
+      );
+
       const epub = await new Promise<string | null>((resolve) => {
         userEpubNode.on((epubData: any) => {
           if (epubData && typeof epubData === "string") {
@@ -2092,13 +2145,12 @@ export class MessagingPlugin extends BasePlugin {
             resolve(null);
           }
         });
-        
+
         // Resolve after a short delay
         setTimeout(() => resolve(null), 2000);
       });
 
       return epub;
-
     } catch (error) {
       console.error("❌ Error getting user epub:", error);
       return null;
@@ -2113,13 +2165,18 @@ export class MessagingPlugin extends BasePlugin {
    * **NEW: Register username for current user**
    * Implements the same logic as useUserRegistration hook
    */
-  public async registerUsername(username: string): Promise<{ success: boolean; error?: string }> {
+  public async registerUsername(
+    username: string
+  ): Promise<{ success: boolean; error?: string }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return { success: false, error: "User not logged in" };
     }
 
     if (!username || username.trim().length < 3) {
-      return { success: false, error: "Username must be at least 3 characters" };
+      return {
+        success: false,
+        error: "Username must be at least 3 characters",
+      };
     }
 
     try {
@@ -2131,7 +2188,10 @@ export class MessagingPlugin extends BasePlugin {
       // Check if username is available
       const isAvailable = await this.isUsernameAvailable(username);
       if (!isAvailable) {
-        return { success: false, error: `Username "${username}" is already taken` };
+        return {
+          success: false,
+          error: `Username "${username}" is already taken`,
+        };
       }
 
       // Save username mapping (shogun/usernames/username)
@@ -2206,13 +2266,18 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Update username for current user**
    */
-  public async updateUsername(newUsername: string): Promise<{ success: boolean; error?: string }> {
+  public async updateUsername(
+    newUsername: string
+  ): Promise<{ success: boolean; error?: string }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return { success: false, error: "User not logged in" };
     }
 
     if (!newUsername || newUsername.trim().length < 3) {
-      return { success: false, error: "Username must be at least 3 characters" };
+      return {
+        success: false,
+        error: "Username must be at least 3 characters",
+      };
     }
 
     try {
@@ -2224,7 +2289,10 @@ export class MessagingPlugin extends BasePlugin {
       // Check if new username is available
       const isAvailable = await this.isUsernameAvailable(newUsername);
       if (!isAvailable) {
-        return { success: false, error: `Username "${newUsername}" is already taken` };
+        return {
+          success: false,
+          error: `Username "${newUsername}" is already taken`,
+        };
       }
 
       // Get current username
@@ -2238,7 +2306,9 @@ export class MessagingPlugin extends BasePlugin {
         await new Promise<void>((resolve, reject) => {
           oldUsernameRef.put(null, (ack: any) => {
             if (ack.err) {
-              console.warn(`Warning: Could not remove old username: ${ack.err}`);
+              console.warn(
+                `Warning: Could not remove old username: ${ack.err}`
+              );
             }
             resolve();
           });
@@ -2398,19 +2468,31 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Validate username format**
    */
-  public validateUsername(username: string): { isValid: boolean; error?: string } {
+  public validateUsername(username: string): {
+    isValid: boolean;
+    error?: string;
+  } {
     if (!username || username.trim().length < 3) {
-      return { isValid: false, error: "Username must be at least 3 characters" };
+      return {
+        isValid: false,
+        error: "Username must be at least 3 characters",
+      };
     }
 
     if (username.length > 20) {
-      return { isValid: false, error: "Username must be 20 characters or less" };
+      return {
+        isValid: false,
+        error: "Username must be 20 characters or less",
+      };
     }
 
     // Username should be alphanumeric and underscores only
     const usernameRegex = /^[a-zA-Z0-9_]+$/;
     if (!usernameRegex.test(username)) {
-      return { isValid: false, error: "Username can only contain letters, numbers, and underscores" };
+      return {
+        isValid: false,
+        error: "Username can only contain letters, numbers, and underscores",
+      };
     }
 
     return { isValid: true };
@@ -2421,12 +2503,48 @@ export class MessagingPlugin extends BasePlugin {
    */
   public generateRandomUsername(): string {
     const adjectives = [
-      "Swift", "Bright", "Calm", "Wise", "Bold", "Gentle", "Quick", "Warm", "Cool", "Smart",
-      "Brave", "Clever", "Fierce", "Kind", "Lucky", "Mighty", "Noble", "Proud", "Swift", "Wise"
+      "Swift",
+      "Bright",
+      "Calm",
+      "Wise",
+      "Bold",
+      "Gentle",
+      "Quick",
+      "Warm",
+      "Cool",
+      "Smart",
+      "Brave",
+      "Clever",
+      "Fierce",
+      "Kind",
+      "Lucky",
+      "Mighty",
+      "Noble",
+      "Proud",
+      "Swift",
+      "Wise",
     ];
     const nouns = [
-      "Wolf", "Eagle", "Lion", "Bear", "Fox", "Hawk", "Tiger", "Dragon", "Phoenix", "Panther",
-      "Falcon", "Jaguar", "Lynx", "Owl", "Puma", "Raven", "Shark", "Viper", "Wolf", "Zebra"
+      "Wolf",
+      "Eagle",
+      "Lion",
+      "Bear",
+      "Fox",
+      "Hawk",
+      "Tiger",
+      "Dragon",
+      "Phoenix",
+      "Panther",
+      "Falcon",
+      "Jaguar",
+      "Lynx",
+      "Owl",
+      "Puma",
+      "Raven",
+      "Shark",
+      "Viper",
+      "Wolf",
+      "Zebra",
     ];
 
     const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
@@ -2439,7 +2557,10 @@ export class MessagingPlugin extends BasePlugin {
   /**
    * **NEW: Auto-register user after login**
    */
-  public async autoRegisterUser(): Promise<{ success: boolean; error?: string }> {
+  public async autoRegisterUser(): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return { success: false, error: "User not logged in" };
     }
@@ -2454,18 +2575,22 @@ export class MessagingPlugin extends BasePlugin {
       const existingUser = await this.core.db.getUserData("alias");
       if (existingUser && existingUser !== currentUserPair.pub) {
         // User already has a username, just ensure profile is up to date
-        await this.registerUserData(existingUser, currentUserPair.epub, currentUserPair.pub);
+        await this.registerUserData(
+          existingUser,
+          currentUserPair.epub,
+          currentUserPair.pub
+        );
         return { success: true };
       }
 
       // Generate a random username if none exists
       const randomUsername = this.generateRandomUsername();
       const result = await this.registerUsername(randomUsername);
-      
+
       if (result.success) {
         console.log(`✅ Auto-registered user with username: ${randomUsername}`);
       }
-      
+
       return result;
     } catch (error: any) {
       return {
@@ -2474,5 +2599,4 @@ export class MessagingPlugin extends BasePlugin {
       };
     }
   }
-
 }
