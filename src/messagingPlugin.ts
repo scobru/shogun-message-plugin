@@ -1,4 +1,4 @@
-// Plugin di messaggistica E2E corretto per GunDB
+// Correct E2E messaging plugin for GunDB
 import { ShogunCore } from "shogun-core";
 import { BasePlugin } from "./base";
 import { MessageProcessor } from "./messageProcessor";
@@ -126,14 +126,14 @@ export class MessagingPlugin extends BasePlugin {
       if (!this.core.isLoggedIn() || !this.core.db.user) {
         return {
           success: false,
-          error: "Devi essere loggato per inviare un messaggio.",
+          error: "You must be logged in to send a message.",
         };
       }
 
       if (!recipientPub || !messageContent) {
         return {
           success: false,
-          error: "Destinatario e messaggio sono obbligatori.",
+          error: "Recipient and message are required.",
         };
       }
 
@@ -141,7 +141,7 @@ export class MessagingPlugin extends BasePlugin {
       if (typeof messageContent !== "string") {
         return {
           success: false,
-          error: "Il messaggio deve essere una stringa valida.",
+          error: "Message must be a valid string.",
         };
       }
 
@@ -156,7 +156,7 @@ export class MessagingPlugin extends BasePlugin {
           success: false,
           error: containsImages
             ? "L'immagine è troppo grande. Prova con un'immagine più piccola."
-            : "Il messaggio deve essere una stringa di massimo 10.000 caratteri.",
+            : "Message must be a string up to 10,000 characters.",
         };
       }
 
@@ -165,7 +165,7 @@ export class MessagingPlugin extends BasePlugin {
         if (!currentUserPair) {
           return {
             success: false,
-            error: "Coppia di chiavi utente non disponibile",
+            error: "User key pair not available",
           };
         }
 
@@ -291,7 +291,7 @@ export class MessagingPlugin extends BasePlugin {
         return {
           success: false,
           error:
-            error.message || "Errore sconosciuto durante l'invio del messaggio",
+            error.message || "Unknown error while sending message",
         };
       }
     }, "sendMessage").finally(() => {
@@ -1521,7 +1521,7 @@ export class MessagingPlugin extends BasePlugin {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       console.log(
-        "🔧 sendMessageToLegacyPath: Sending to legacy path for compatibility"
+        "🔧 sendMessageDirect: Sending to legacy path for compatibility"
       );
 
       // Generate message ID
@@ -1533,7 +1533,7 @@ export class MessagingPlugin extends BasePlugin {
       )) as string;
 
       if (!sharedSecret) {
-        throw new Error("Impossibile derivare il secret condiviso");
+        throw new Error("Unable to derive shared secret");
       }
 
       const encryptedMessage = await this.core.db.sea.encrypt(
@@ -1541,24 +1541,33 @@ export class MessagingPlugin extends BasePlugin {
         sharedSecret
       );
 
-      // Create message object compatible with legacy system
-      const message = {
+      // Unified envelope (same as sendMessage): EncryptedMessage
+      const encryptedMessageData = {
+        data: encryptedMessage,
+        from: this.core.db.user?.is?.pub || "",
+        timestamp: Date.now(),
         id: messageId,
+      };
+
+      // Legacy-compatible fields (kept for backward compatibility)
+      const legacyFields = {
         sender: options.senderAlias || "Unknown",
-        senderPub: this.core.db.user?.is?.pub || "",
+        senderPub: encryptedMessageData.from,
         recipient: options.recipientAlias || "Unknown",
         recipientPub: recipientPub,
-        message: encryptedMessage,
+        message: encryptedMessage, // legacy key
         type: options.messageType || "alias",
-        timestamp: Date.now(),
         encrypted: true,
       };
+
+      // Final payload written to legacy path: unified + legacy fields
+      const message = { ...encryptedMessageData, ...legacyFields } as const;
 
       // Get today's date bucket for organization (safe key)
       const today = MessagingSchema.utils.formatDate(new Date());
 
       console.log(
-        "🔧 sendMessageToLegacyPath: Saving to legacy path (nested nodes):",
+        "🔧 sendMessageDirect: Saving to legacy path (nested nodes):",
         { recipientPub, today, messageId }
       );
 
@@ -1571,13 +1580,13 @@ export class MessagingPlugin extends BasePlugin {
           .put(message, (ack: any) => {
             if (ack.err) {
               console.error(
-                "❌ sendMessageToLegacyPath: Error saving to legacy path:",
+                "❌ sendMessageDirect: Error saving to legacy path:",
                 ack.err
               );
               reject(new Error(`Failed to save to legacy path: ${ack.err}`));
             } else {
               console.log(
-                "✅ sendMessageToLegacyPath: Message saved to legacy path successfully"
+                "✅ sendMessageDirect: Message saved to legacy path successfully"
               );
               resolve();
             }
@@ -1588,15 +1597,15 @@ export class MessagingPlugin extends BasePlugin {
       // The sender will receive the message through the listening system
       // This prevents duplicate messages and ensures proper message flow
       console.log(
-        "🔧 sendMessageToLegacyPath: Message saved to recipient path only"
+        "🔧 sendMessageDirect: Message saved to recipient path only"
       );
 
       console.log(
-        "✅ sendMessageToLegacyPath: Message sent to legacy paths successfully"
+        "✅ sendMessageDirect: Message sent to legacy paths successfully"
       );
       return { success: true, messageId };
     } catch (error: any) {
-      console.error("❌ sendMessageToLegacyPath: Error:", error);
+      console.error("❌ sendMessageDirect: Error:", error);
       return {
         success: false,
         error: error.message || "Unknown error sending to legacy path",

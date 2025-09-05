@@ -1372,14 +1372,14 @@ export class MessageProcessor {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per pulire una conversazione.",
+        error: "You must be logged in to clear a conversation.",
       };
     }
 
     if (!recipientPub || typeof recipientPub !== "string") {
       return {
         success: false,
-        error: "Public key del destinatario richiesta.",
+        error: "Recipient public key is required.",
       };
     }
 
@@ -1388,7 +1388,7 @@ export class MessageProcessor {
       if (!currentUserPair) {
         return {
           success: false,
-          error: "Coppia di chiavi utente non disponibile",
+          error: "User key pair not available",
         };
       }
 
@@ -1482,7 +1482,7 @@ export class MessageProcessor {
         success: false,
         error:
           error.message ||
-          "Errore sconosciuto durante la pulizia della conversazione",
+          "Unknown error while clearing the conversation",
       };
     }
   }
@@ -1516,7 +1516,7 @@ export class MessageProcessor {
             if (hasError) {
               console.error(`❌ Error clearing messages from ${pathType} path`);
               reject(
-                new Error(`Errore durante la pulizia dei messaggi ${pathType}`)
+                new Error(`Error while clearing ${pathType} messages`)
               );
             } else {
               console.log(
@@ -1757,7 +1757,7 @@ export class MessageProcessor {
         success: false,
         error:
           error.message ||
-          "Errore sconosciuto durante la nullificazione dei messaggi",
+          "Unknown error while nullifying messages",
       };
     }
   }
@@ -1792,7 +1792,7 @@ export class MessageProcessor {
               );
               reject(
                 new Error(
-                  `Errore durante la nullificazione dei messaggi ${pathType}`
+                  `Error while nullifying ${pathType} messages`
                 )
               );
             } else {

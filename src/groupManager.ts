@@ -121,7 +121,7 @@ export class GroupManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per creare un gruppo.",
+        error: "You must be logged in to create a group.",
       };
     }
 
@@ -129,7 +129,7 @@ export class GroupManager {
     if (!currentUserPair) {
       return {
         success: false,
-        error: "Coppia di chiavi utente non disponibile",
+        error: "User key pair not available",
       };
     }
     const creatorPub = currentUserPair.pub;
@@ -145,7 +145,7 @@ export class GroupManager {
         return {
           success: false,
           error:
-            "Crypto API non disponibile per generare la chiave del gruppo.",
+            "Crypto API not available to generate the group key.",
         };
       }
 
@@ -160,7 +160,7 @@ export class GroupManager {
       if (!groupKey) {
         return {
           success: false,
-          error: "Impossibile generare la chiave del gruppo.",
+          error: "Unable to generate group key.",
         };
       }
 
@@ -230,7 +230,7 @@ export class GroupManager {
       if (failedMembers.length > 0) {
         return {
           success: false,
-          error: `Impossibile creare le chiavi di cifratura per i seguenti membri: ${failedMembers.join(", ")}. Creazione del gruppo annullata.`,
+          error: `Unable to create encryption keys for the following members: ${failedMembers.join(", ")}. Group creation cancelled.`,
         };
       }
 
@@ -336,7 +336,7 @@ export class GroupManager {
       return {
         success: false,
         error:
-          error.message || "Errore sconosciuto durante la creazione del gruppo",
+          error.message || "Unknown error during group creation",
       };
     }
   }
@@ -668,7 +668,7 @@ export class GroupManager {
       console.log("🔍 GroupManager.sendGroupMessage: User not logged in");
       return {
         success: false,
-        error: "Devi essere loggato per inviare un messaggio.",
+        error: "You must be logged in to send a message.",
       };
     }
 
@@ -677,7 +677,7 @@ export class GroupManager {
       console.log("🔍 GroupManager.sendGroupMessage: No user pair available");
       return {
         success: false,
-        error: "Coppia di chiavi utente non disponibile",
+        error: "User key pair not available",
       };
     }
     const senderPub = currentUserPair.pub;
@@ -689,7 +689,7 @@ export class GroupManager {
         "🔍 GroupManager.sendGroupMessage: Group data not found for",
         groupId
       );
-      return { success: false, error: "Gruppo non trovato." };
+      return { success: false, error: "Group not found." };
     }
 
     console.log("🔍 GroupManager.sendGroupMessage: Group data found:", {
@@ -710,7 +710,7 @@ export class GroupManager {
       console.log(
         "🔍 GroupManager.sendGroupMessage: User is not a member of the group"
       );
-      return { success: false, error: "Non sei membro di questo gruppo." };
+      return { success: false, error: "You are not a member of this group." };
     }
 
     try {
@@ -733,7 +733,7 @@ export class GroupManager {
         );
         return {
           success: false,
-          error: "Impossibile ottenere la chiave del gruppo per l'utente.",
+          error: "Unable to obtain group key for the user.",
         };
       }
 
@@ -792,7 +792,7 @@ export class GroupManager {
         success: false,
         error:
           error.message ||
-          "Errore sconosciuto durante l'invio del messaggio di gruppo",
+          "Unknown error while sending group message",
       };
     }
   }

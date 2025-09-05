@@ -306,7 +306,7 @@ export class PublicRoomManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per creare una sala pubblica.",
+        error: "You must be logged in to create a public room.",
       };
     }
 
@@ -317,7 +317,7 @@ export class PublicRoomManager {
     ) {
       return {
         success: false,
-        error: "Il nome della sala è obbligatorio.",
+        error: "Room name is required.",
       };
     }
 
@@ -326,7 +326,7 @@ export class PublicRoomManager {
       if (!currentUserPair) {
         return {
           success: false,
-          error: "Coppia di chiavi utente non disponibile",
+          error: "User key pair not available",
         };
       }
 
@@ -361,7 +361,7 @@ export class PublicRoomManager {
     } catch (error: any) {
       return {
         success: false,
-        error: error.message || "Errore durante la creazione della sala",
+        error: error.message || "Error creating room",
       };
     }
   }
@@ -518,7 +518,7 @@ export class PublicRoomManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per inviare un messaggio pubblico.",
+        error: "You must be logged in to send a public message.",
       };
     }
 
@@ -530,8 +530,7 @@ export class PublicRoomManager {
     ) {
       return {
         success: false,
-        error:
-          "ID stanza e messaggio sono obbligatori e devono essere stringhe valide.",
+        error: "Room ID and message are required and must be valid strings.",
       };
     }
 
@@ -540,7 +539,7 @@ export class PublicRoomManager {
       if (!currentUserPair) {
         return {
           success: false,
-          error: "Coppia di chiavi utente non disponibile",
+          error: "User key pair not available",
         };
       }
 
@@ -557,7 +556,7 @@ export class PublicRoomManager {
       // This allows them to come through the listener properly
       // Only mark as processed when received through the listener
 
-      // Crea il messaggio pubblico
+      // Create the public message
       const publicMessage: PublicMessage = {
         from: senderPub,
         content: messageContent,
@@ -567,13 +566,13 @@ export class PublicRoomManager {
         username,
       };
 
-      // Firma il messaggio per autenticità
+      // Sign the message for authenticity
       const signature = await this.core.db.sea.sign(
         messageContent,
         currentUserPair
       );
 
-      // Aggiungi la firma al messaggio
+      // Add the signature to the message
       const signedMessage = {
         ...publicMessage,
         signature,
@@ -627,7 +626,7 @@ export class PublicRoomManager {
         success: false,
         error:
           error.message ||
-          "Errore sconosciuto durante l'invio del messaggio pubblico",
+          "Unknown error while sending public message",
       };
     }
   }
@@ -849,19 +848,19 @@ export class PublicRoomManager {
         const defaultRooms = [
           {
             name: "general",
-            description: "Discussione generale - benvenuti tutti!",
+            description: "General discussion - everyone welcome!",
           },
           {
             name: "help",
-            description: "Supporto e aiuto per l'uso dell'app",
+            description: "Support and help using the app",
           },
           {
             name: "random",
-            description: "Argomenti casuali e conversazioni informali",
+            description: "Random topics and informal conversations",
           },
           {
             name: "announcements",
-            description: "Annunci ufficiali e aggiornamenti",
+            description: "Official announcements and updates",
           },
         ];
 

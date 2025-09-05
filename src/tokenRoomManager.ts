@@ -239,7 +239,7 @@ export class TokenRoomManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per unirti a una stanza.",
+        error: "You must be logged in to join a room.",
       };
     }
 
@@ -258,7 +258,7 @@ export class TokenRoomManager {
       if (!roomData) {
         return {
           success: false,
-          error: "Stanza non trovata.",
+          error: "Room not found.",
         };
       }
 
@@ -266,7 +266,7 @@ export class TokenRoomManager {
       if (!roomData.token || roomData.token !== token) {
         return {
           success: false,
-          error: "Token non valido per questa stanza.",
+          error: "Invalid token for this room.",
         };
       }
 
@@ -401,7 +401,7 @@ export class TokenRoomManager {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
-        error: "Devi essere loggato per inviare messaggi.",
+        error: "You must be logged in to send messages.",
       };
     }
 
@@ -419,7 +419,7 @@ export class TokenRoomManager {
       if (!currentUserPair) {
         return {
           success: false,
-          error: "Chiavi utente non disponibili.",
+          error: "User keys not available.",
         };
       }
 
@@ -437,7 +437,7 @@ export class TokenRoomManager {
       if (!encryptedContent) {
         return {
           success: false,
-          error: "Errore nella cifratura del messaggio.",
+          error: "Error during message encryption.",
         };
       }
 
@@ -552,7 +552,7 @@ export class TokenRoomManager {
         this.emitStatus({
           type: "messages:fetch:error",
           roomId,
-          error: "Token non disponibile",
+          error: "Token not available",
         });
         return [];
       }
@@ -1091,7 +1091,7 @@ export class TokenRoomManager {
       console.log("🔍 createTokenRoom: User not logged in");
       return {
         success: false,
-        error: "Devi essere loggato per creare una stanza token.",
+        error: "You must be logged in to create a token room.",
       };
     }
 
@@ -1099,7 +1099,7 @@ export class TokenRoomManager {
       console.log("🔍 createTokenRoom: Invalid room name");
       return {
         success: false,
-        error: "Nome stanza è obbligatorio.",
+        error: "Room name is required.",
       };
     }
 
@@ -1110,7 +1110,7 @@ export class TokenRoomManager {
         console.log("🔍 createTokenRoom: No user pair available");
         return {
           success: false,
-          error: "Chiavi utente non disponibili.",
+          error: "User keys not available.",
         };
       }
 
@@ -1160,7 +1160,7 @@ export class TokenRoomManager {
         );
         return {
           success: false,
-          error: "Dati della stanza incompleti.",
+          error: "Incomplete room data.",
         };
       }
 

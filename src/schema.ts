@@ -1,10 +1,10 @@
 /**
- * Schema per il plugin di messaggistica Shogun
- * Definisce tutti i percorsi GunDB in modo centralizzato per consistenza
+ * Schema for the Shogun messaging plugin
+ * Centralizes all GunDB paths for consistency
  */
 
 export const MessagingSchema = {
-  // Percorsi principali
+  // Main collections
   root: 'shogun',
   collections: {
     messages: 'messages',
@@ -16,21 +16,21 @@ export const MessagingSchema = {
     usernames: 'usernames' // **NEW: Username mapping collection**
   },
 
-  // Percorsi per messaggi privati
+  // Private message paths
   privateMessages: {
-    // Percorso per messaggi inviati a un destinatario specifico
+    // Path for messages sent to a specific recipient
     recipient: (recipientPub: string) => `msg_${recipientPub}`,
     
-    // Percorso per messaggi ricevuti dall'utente corrente
+    // Path for messages received by the current user
     currentUser: (currentUserPub: string) => `msg_${currentUserPub}`,
     
-    // Percorso conversazione bidirezionale
+    // Bidirectional conversation path
     conversation: (user1Pub: string, user2Pub: string) => {
       const sorted = [user1Pub, user2Pub].sort();
       return `conversation_${sorted[0]}_${sorted[1]}`;
     },
     
-    // Percorso legacy per compatibilità
+    // Legacy path for compatibility
     legacy: {
       userMessages: (userPub: string) => `${userPub}/messages`,
       userMessagesByDate: (userPub: string, date: string) => `${userPub}/messages/${date}`,
@@ -39,180 +39,180 @@ export const MessagingSchema = {
     }
   },
 
-  // Percorsi per gruppi
+  // Group paths
   groups: {
-    // Dati del gruppo
+    // Group data
     data: (groupId: string) => `group_${groupId}`,
     
-    // Messaggi del gruppo
+    // Group messages
     messages: (groupId: string) => `group-messages/${groupId}`,
     
-    // Membri del gruppo
+    // Group members
     members: (groupId: string) => `group_${groupId}/members`,
     
-    // Chiavi cifrate del gruppo
+    // Encrypted group keys
     encryptedKeys: (groupId: string) => `group_${groupId}/encryptedKeys`,
     
     // **NEW: localStorage keys for groups**
     localStorage: (groupId: string) => `group_messages_${groupId}`
   },
 
-  // Percorsi per stanze token
+  // Token room paths
   tokenRooms: {
-    // Dati della stanza
+    // Room data
     data: (roomId: string) => `token_room_${roomId}`,
     
-    // Messaggi della stanza
+    // Room messages
     messages: (roomId: string) => `token-messages/${roomId}`,
     
-    // Membri della stanza
+    // Room members
     members: (roomId: string) => `token_room_${roomId}/members`,
     
-    // Token di accesso
+    // Access token path
     access: (roomId: string) => `token_room_${roomId}/access`,
     
     // **NEW: localStorage keys for token rooms**
     localStorage: (roomId: string) => `tokenRoom_messages_${roomId}`
   },
 
-  // Percorsi per stanze pubbliche
+  // Public room paths
   publicRooms: {
-    // Dati della stanza
+    // Room data
     data: (roomId: string) => `public_room_${roomId}`,
     
-    // Messaggi della stanza
+    // Room messages
     messages: (roomId: string) => `public-messages/${roomId}`,
     
-    // Metadati della stanza
+    // Room metadata
     metadata: (roomId: string) => `public_room_${roomId}/metadata`,
     
     // **NEW: localStorage keys for public rooms**
     localStorage: (roomId: string) => `publicRoom_messages_${roomId}`
   },
 
-  // Percorsi per utenti
+  // User paths
   users: {
-    // Profilo utente
+    // User profile
     profile: (userPub: string) => `~${userPub}`,
     
-    // Dati utente
+    // User data
     data: (userPub: string) => `users/${userPub}`,
     
-    // Chiavi di cifratura
+    // Encryption keys
     epub: (userPub: string) => `~${userPub}/epub`,
     
-    // Gruppi dell'utente
+    // User's groups
     groups: (userPub: string) => `users/${userPub}/groups`,
     
-    // Stanze token dell'utente
+    // User's token rooms
     tokenRooms: (userPub: string) => `users/${userPub}/tokenRooms`,
     
-    // **NEW: Username mapping per ricerca utenti**
+    // **NEW: Username mapping for user search**
     usernames: () => `usernames`,
     
     // **NEW: Mapping username -> user data**
     usernameMapping: (username: string) => `usernames/${username}`,
     
-    // **NEW: Test path per connessione GunDB**
+    // **NEW: Test path for GunDB connection**
     test: () => `test`
   },
 
-  // Percorsi per conversazioni
+  // Conversation paths
   conversations: {
-    // Conversazione specifica
+    // Specific conversation
     conversation: (conversationId: string) => `conversations/${conversationId}`,
     
-    // Messaggi di una conversazione
+    // Conversation messages
     messages: (conversationId: string) => `conversations/${conversationId}/messages`,
     
-    // Metadati conversazione
+    // Conversation metadata
     metadata: (conversationId: string) => `conversations/${conversationId}/metadata`
   },
 
-  // Utility per generare ID e percorsi
+  // Utilities to generate IDs and paths
   utils: {
-    // Genera ID messaggio unico
+    // Generate unique message ID
     generateMessageId: () => `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     
-    // Genera ID gruppo unico
+    // Generate unique group ID
     generateGroupId: () => `group_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     
-    // Genera ID stanza token unico
+    // Generate unique token room ID
     generateTokenRoomId: () => `token_room_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     
-    // Genera ID stanza pubblica unico
+    // Generate unique public room ID
     generatePublicRoomId: () => `public_room_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     
-    // Formato data per organizzazione messaggi (YYYY-MM-DD)
+    // Date format for message organization (YYYY-MM-DD)
     formatDate: (date: Date = new Date()) => date.toLocaleDateString("en-CA"),
     
-    // Formato data per timestamp
+    // Date format for timestamp
     formatTimestamp: (timestamp: number) => new Date(timestamp).toLocaleDateString("en-CA"),
     
-    // Crea ID conversazione consistente
+    // Create a consistent conversation ID
     createConversationId: (user1Pub: string, user2Pub: string) => {
       const sorted = [user1Pub, user2Pub].sort();
       return `conversation_${sorted[0]}_${sorted[1]}`;
     }
   },
 
-  // Percorsi per debug e sviluppo
+  // Debug and development paths
   debug: {
-    // Struttura GunDB per debug
+    // GunDB structure for debug
     structure: (path: string) => `debug/${path}`,
     
-    // Log operazioni
+    // Operation logs
     logs: (operation: string) => `debug/logs/${operation}`,
     
-    // Metriche performance
+    // Performance metrics
     metrics: (component: string) => `debug/metrics/${component}`
   }
 };
 
 /**
- * Helper per creare percorsi sicuri
+ * Helper to create safe paths
  */
 export function createSafePath(pubKey: string, prefix: string = "msg"): string {
   if (!pubKey || typeof pubKey !== "string") {
-    throw new Error("Public key deve essere una stringa valida");
+    throw new Error("Public key must be a valid string");
   }
   
-  // Rimuovi caratteri pericolosi e normalizza
+  // Remove dangerous characters and normalize
   const safeKey = pubKey.replace(/[^a-zA-Z0-9._-]/g, "_");
   return `${prefix}_${safeKey}`;
 }
 
 /**
- * Helper per creare percorsi conversazione
+ * Helper to create conversation paths
  */
 export function createConversationPath(user1Pub: string, user2Pub: string): string {
   if (!user1Pub || !user2Pub) {
-    throw new Error("Entrambe le public key sono richieste");
+    throw new Error("Both public keys are required");
   }
   
   return MessagingSchema.utils.createConversationId(user1Pub, user2Pub);
 }
 
 /**
- * Helper per validare percorsi
+ * Helper to validate paths
  */
 export function validatePath(path: string): boolean {
   if (!path || typeof path !== "string") {
     return false;
   }
   
-  // Controlla caratteri pericolosi
+  // Check for dangerous characters
   const dangerousChars = /[<>:"|?*]/;
   return !dangerousChars.test(path);
 }
 
 /**
- * Helper per normalizzare percorsi
+ * Helper to normalize paths
  */
 export function normalizePath(path: string): string {
   if (!path) return "";
   
-  // Rimuovi caratteri pericolosi e normalizza separatori
+  // Remove dangerous characters and normalize separators
   return path
     .replace(/[<>:"|?*]/g, "_")
     .replace(/\/+/g, "/")

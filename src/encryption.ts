@@ -249,20 +249,20 @@ export class EncryptionManager {
 
     const currentUserPair = (this.core.db.user as any)._?.sea;
     if (!currentUserPair) {
-      throw new Error("Coppia di chiavi utente non disponibile");
+      throw new Error("User key pair not available");
     }
 
     // Get the recipient's encryption public key
     const recipientEpub = await this.getRecipientEpub(recipientPub);
 
-    // Usa E2E encryption: deriva un secret condiviso e cifra con quello
+    // Use E2E encryption: derive a shared secret and encrypt with it
     const sharedSecret = await this.core.db.sea.secret(
       recipientEpub,
       currentUserPair
     );
 
     if (!sharedSecret) {
-      throw new Error("Impossibile derivare il secret condiviso");
+      throw new Error("Unable to derive shared secret");
     }
 
     const encryptedData = await this.core.db.sea.encrypt(
@@ -271,7 +271,7 @@ export class EncryptionManager {
     );
 
     if (!encryptedData || typeof encryptedData !== "string") {
-      throw new Error("Errore nella cifratura del messaggio");
+      throw new Error("Error during message encryption");
     }
 
     return encryptedData;
@@ -301,13 +301,13 @@ export class EncryptionManager {
     // Get the sender's encryption public key
     const senderEpub = await this.getRecipientEpub(senderPub);
 
-    // Usa E2E decryption: deriva il secret condiviso dal mittente
+    // Use E2E decryption: derive the shared secret from the sender
     const sharedSecret = await this.core.db.sea.secret(
       senderEpub,
       currentUserPair
     );
     if (!sharedSecret) {
-      throw new Error("Impossibile derivare il secret condiviso dal mittente");
+      throw new Error("Unable to derive shared secret from sender");
     }
 
     const decryptedJson = await this.core.db.sea.decrypt(
@@ -318,17 +318,17 @@ export class EncryptionManager {
     let messageData: MessageData;
 
     if (typeof decryptedJson === "string") {
-      // SEA.decrypt returned a JSON string, parse it
+      // SEA.decrypt returned a JSON string; parse it
       try {
         messageData = JSON.parse(decryptedJson) as MessageData;
       } catch (parseError) {
-        throw new Error("Errore nel parsing del messaggio decifrato");
+        throw new Error("Error parsing decrypted message JSON");
       }
     } else if (typeof decryptedJson === "object" && decryptedJson !== null) {
       // SEA.decrypt returned the parsed object directly
       messageData = decryptedJson as MessageData;
     } else {
-      throw new Error("Errore nella decifratura: risultato non valido");
+      throw new Error("Decryption error: invalid result");
     }
 
     return messageData;

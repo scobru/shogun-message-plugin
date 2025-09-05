@@ -104,7 +104,7 @@ export interface GroupMessage {
   id: string;
   groupId: string;
   username?: string;
-  signature?: string; // Firma digitale del messaggio
+  signature?: string; // Digital signature of the message
 }
 
 export interface GroupData {
