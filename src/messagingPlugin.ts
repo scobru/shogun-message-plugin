@@ -1184,6 +1184,55 @@ export class MessagingPlugin extends BasePlugin {
   }
 
   /**
+   * **NEW: Remove a legacy-path message by date bucket**
+   * Deletes from: <currentUserPub>/messages/<YYYY-MM-DD>/<messageId>
+   */
+  public async removeLegacyMessageByDate(
+    messageId: string,
+    dateBucket: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.safeOperation(async () => {
+      try {
+        const currentUserPub = this.core.db.user?.is?.pub;
+        if (!currentUserPub) {
+          return { success: false, error: "User not authenticated" };
+        }
+
+        const legacyPath = `${currentUserPub}/${MessagingSchema.collections.messages}/${dateBucket}/${messageId}`;
+
+        await new Promise<void>((resolve, reject) => {
+          this.core.db.gun.get(legacyPath).put(null, (ack: any) => {
+            if (ack?.err) {
+              reject(new Error(ack.err));
+            } else {
+              resolve();
+            }
+          });
+        });
+
+        return { success: true };
+      } catch (error: any) {
+        return {
+          success: false,
+          error: error?.message || "Failed to remove legacy message",
+        };
+      }
+    }, "removeLegacyMessageByDate");
+  }
+
+  /**
+   * **NEW: Remove a legacy-path message by timestamp**
+   * Computes the date bucket from the provided timestamp.
+   */
+  public async removeLegacyMessageByTimestamp(
+    messageId: string,
+    timestamp: number
+  ): Promise<{ success: boolean; error?: string }> {
+    const dateBucket = MessagingSchema.utils.formatDate(new Date(timestamp));
+    return this.removeLegacyMessageByDate(messageId, dateBucket);
+  }
+
+  /**
    * **NEW: Remove all messages from a conversation in GunDB**
    */
   public async removeConversationMessages(
