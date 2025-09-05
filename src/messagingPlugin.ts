@@ -1511,7 +1511,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async sendMessageDirect(
     recipientPub: string,
-    recipientEpub: string,
+    _recipientEpub: string,
     messageContent: string,
     options: {
       messageType?: "alias" | "epub" | "token";
@@ -1527,8 +1527,13 @@ export class MessagingPlugin extends BasePlugin {
       // Generate message ID
       const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+      // Resolve recipient epub via EncryptionManager (handles cache/retries)
+      const resolvedRecipientEpub = await this.encryptionManager.getRecipientEpub(
+        recipientPub
+      );
+
       const sharedSecret = (await this.core.db.sea.secret(
-        recipientEpub,
+        resolvedRecipientEpub,
         (this.core.db.user as any)?._?.sea
       )) as string;
 
@@ -1698,11 +1703,6 @@ export class MessagingPlugin extends BasePlugin {
         ? messages.slice(-options.limit)
         : messages;
 
-      console.log(
-        "✅ receiveMessageFromLegacyPath: Successfully read messages:",
-        limitedMessages.length
-      );
-
       return {
         success: true,
         messages: limitedMessages,
@@ -1758,7 +1758,7 @@ export class MessagingPlugin extends BasePlugin {
           const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
           const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
 
-          dateMessagesNode.map().on((messageData: any, messageId: string) => {
+          dateMessagesNode.map().on(async (messageData: any, messageId: string) => {
             if (
               messageData &&
               typeof messageData === "object" &&
@@ -1779,14 +1779,40 @@ export class MessagingPlugin extends BasePlugin {
                 );
 
                 // **IMPROVED: Use schema utility for message processing**
-                const processedMessage = this._processLegacyMessage(
-                  messageData,
-                  messageId,
-                  date
-                );
+                try {
+                  const currentUserPair = (this.core.db.user as any)?._?.sea;
+                  if (!currentUserPair) return;
 
-                // Call the callback with the processed message
-                callback(processedMessage);
+                  const senderPub = messageData.from || messageData.senderPub;
+                  const encryptedPayload: string | undefined = messageData.data || messageData.message;
+                  if (!senderPub || !encryptedPayload) return;
+
+                  const senderEpub = await this.encryptionManager.getRecipientEpub(senderPub);
+                  const sharedSecret = await this.core.db.sea.secret(senderEpub, currentUserPair);
+                  if (!sharedSecret) return;
+
+                  const decrypted = await this.core.db.sea.decrypt(encryptedPayload, sharedSecret);
+                  let content: string | null = null;
+                  if (typeof decrypted === "string") {
+                    content = decrypted;
+                  } else if (decrypted && typeof decrypted === "object") {
+                    content = typeof (decrypted as any).content === "string"
+                      ? (decrypted as any).content
+                      : JSON.stringify(decrypted);
+                  }
+                  if (!content) return; // emit only successfully decrypted
+
+                  const processedMessage = {
+                    id: messageId,
+                    from: senderPub,
+                    content,
+                    timestamp: messageData.timestamp || Date.now(),
+                  };
+
+                  callback(processedMessage);
+                } catch (_) {
+                  // silently skip non-decryptable messages
+                }
               } else {
                 console.log(
                   "🔧 startListeningToLegacyPaths: Message filtered out (not valid):",
