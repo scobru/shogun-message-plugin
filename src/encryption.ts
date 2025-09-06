@@ -69,8 +69,8 @@ export class EncryptionManager {
       // **FIXED: Increased timeout to handle slow network conditions**
       const timeout = 10000; // Increased from 3s to 10s for better reliability
 
-      // Try multiple sources in parallel
-      const promises = [
+      // Try multiple sources in parallel and handle all outcomes to avoid unhandled rejections
+      const results = await Promise.allSettled([
         // Try to get the recipient's user data from GunDB
         this.getUserData(recipientPub, timeout),
         // Fallback: try to get from user's public space
@@ -81,22 +81,29 @@ export class EncryptionManager {
         this.getRootData(recipientPub, timeout),
         // Fifth fallback: try to get from the user's public key directly
         this.getDirectData(recipientPub, timeout),
-      ];
+        // **NEW: Try to get from the app's user registry (shogun/users/{pub})**
+        this.getAppUserData(recipientPub, timeout),
+      ]);
 
-      // Wait for the first successful result
-      for (const promise of promises) {
-        try {
-          const result = await promise;
-          if (result && result.epub) {
+      // Use the first fulfilled result containing an epub
+      for (let i = 0; i < results.length; i++) {
+        const res = results[i];
+        const pathNames = ["getUserData", "getPublicData", "getProfileData", "getRootData", "getDirectData", "getAppUserData"];
+        
+        if (res.status === "fulfilled") {
+          const value: any = res.value;
+          console.log(`🔍 ${pathNames[i]}: Found data:`, value ? "YES" : "NO", value?.epub ? "with EPUB" : "no EPUB");
+          
+          if (value && value.epub) {
+            console.log(`✅ Found EPUB via ${pathNames[i]}:`, value.epub.substring(0, 20) + "...");
             this.epubCache.set(recipientPub, {
-              epub: result.epub,
+              epub: value.epub,
               timestamp: Date.now(),
             });
-            return result.epub;
+            return value.epub;
           }
-        } catch (error) {
-          // Continue to next promise
-          continue;
+        } else {
+          console.log(`❌ ${pathNames[i]}: Failed -`, res.reason?.message || "Unknown error");
         }
       }
 
@@ -228,6 +235,32 @@ export class EncryptionManager {
         clearTimeout(timeoutId);
         resolve(data);
       });
+    });
+  }
+
+  /**
+   * **NEW: Get user data from the app's user registry (shogun/users/{pub})**
+   */
+  private async getAppUserData(
+    recipientPub: string,
+    timeout: number
+  ): Promise<any> {
+    return new Promise<any>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Timeout getting app user data"));
+      }, timeout);
+
+      console.log("🔍 getAppUserData: Searching for user in shogun/users/", recipientPub.substring(0, 20) + "...");
+
+      this.core.db.gun
+        .get("shogun")
+        .get("users")
+        .get(recipientPub)
+        .on((data: any) => {
+          clearTimeout(timeoutId);
+          console.log("🔍 getAppUserData: Found data:", data ? "YES" : "NO", data?.epub ? "with EPUB" : "no EPUB");
+          resolve(data);
+        });
     });
   }
 

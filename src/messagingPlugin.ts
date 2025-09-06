@@ -26,6 +26,11 @@ export class MessagingPlugin extends BasePlugin {
   private groupManager: GroupManager;
   private publicRoomManager: PublicRoomManager;
   private tokenRoomManager: TokenRoomManager;
+  // Legacy listening control to prevent duplicate listeners and enable cleanup
+  private _legacyListening: boolean = false;
+  private _legacyDateListeners: Map<string, { off: () => void } | { off: Function } > = new Map();
+  private _legacyTopLevelListener: { off: () => void } | { off: Function } | null = null;
+  private _legacyDebug: boolean = false; // set true only when debugging
 
   // **PRODUCTION: Performance monitoring**
   private performanceMetrics = {
@@ -1198,16 +1203,20 @@ export class MessagingPlugin extends BasePlugin {
           return { success: false, error: "User not authenticated" };
         }
 
-        const legacyPath = `${currentUserPub}/${MessagingSchema.collections.messages}/${dateBucket}/${messageId}`;
-
+        // GunDB requires chained get() calls, not slash-delimited paths
         await new Promise<void>((resolve, reject) => {
-          this.core.db.gun.get(legacyPath).put(null, (ack: any) => {
-            if (ack?.err) {
-              reject(new Error(ack.err));
-            } else {
-              resolve();
-            }
-          });
+          this.core.db.gun
+            .get(currentUserPub)
+            .get(MessagingSchema.collections.messages)
+            .get(dateBucket)
+            .get(messageId)
+            .put(null, (ack: any) => {
+              if (ack?.err) {
+                reject(new Error(ack.err));
+              } else {
+                resolve();
+              }
+            });
         });
 
         return { success: true };
@@ -1560,7 +1569,7 @@ export class MessagingPlugin extends BasePlugin {
    */
   public async sendMessageDirect(
     recipientPub: string,
-    _recipientEpub: string,
+    recipientEpub: string,
     messageContent: string,
     options: {
       messageType?: "alias" | "epub" | "token";
@@ -1576,14 +1585,18 @@ export class MessagingPlugin extends BasePlugin {
       // Generate message ID
       const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      // Resolve recipient epub via EncryptionManager (handles cache/retries)
-      const resolvedRecipientEpub = await this.encryptionManager.getRecipientEpub(
-        recipientPub
-      );
+      // **FIXED: Use the provided EPUB instead of trying to retrieve it again**
+      const resolvedRecipientEpub = recipientEpub;
+      
+      if (!resolvedRecipientEpub) {
+        throw new Error("No EPUB provided for recipient");
+      }
+      
+      console.log("🔧 sendMessageDirect: Using provided EPUB:", resolvedRecipientEpub.substring(0, 20) + "...");
 
       const sharedSecret = (await this.core.db.sea.secret(
         resolvedRecipientEpub,
-        (this.core.db.user as any)?._?.sea
+        (this.core.db.user as any)?._?.sea  
       )) as string;
 
       if (!sharedSecret) {
@@ -1599,6 +1612,8 @@ export class MessagingPlugin extends BasePlugin {
       const encryptedMessageData = {
         data: encryptedMessage,
         from: this.core.db.user?.is?.pub || "",
+        // Include sender's epub to allow recipients to decrypt without lookup
+        senderEpub: (this.core.db.user as any)?._?.sea?.epub || "",
         timestamp: Date.now(),
         id: messageId,
       };
@@ -1607,6 +1622,7 @@ export class MessagingPlugin extends BasePlugin {
       const legacyFields = {
         sender: options.senderAlias || "Unknown",
         senderPub: encryptedMessageData.from,
+        senderEpub: encryptedMessageData.senderEpub,
         recipient: options.recipientAlias || "Unknown",
         recipientPub: recipientPub,
         message: encryptedMessage, // legacy key
@@ -1773,9 +1789,18 @@ export class MessagingPlugin extends BasePlugin {
    */
   public startListeningDirect(callback: (message: any) => void): void {
     try {
-      console.log(
-        "🔧 startListeningToLegacyPaths: Setting up legacy path listeners"
-      );
+      if (this._legacyListening) {
+        if (this._legacyDebug) {
+          console.log("🔧 startListeningToLegacyPaths: already listening (idempotent)");
+        }
+        return;
+      }
+
+      if (this._legacyDebug) {
+        console.log(
+          "🔧 startListeningToLegacyPaths: Setting up legacy path listeners"
+        );
+      }
 
       const currentUserPubFromCore = this.core.db.user?.is?.pub;
       if (!currentUserPubFromCore) {
@@ -1787,95 +1812,89 @@ export class MessagingPlugin extends BasePlugin {
       // NOT to the sender's paths
       const currentUserMessagesPath = `${currentUserPubFromCore}/${MessagingSchema.collections.messages}`;
 
-      console.log(
-        "🔧 startListeningToLegacyPaths: Listening to recipient paths:",
-        currentUserMessagesPath
-      );
+      if (this._legacyDebug) {
+        console.log(
+          "🔧 startListeningToLegacyPaths: Listening to recipient paths:",
+          currentUserMessagesPath
+        );
+      }
 
       // Set up listener for new messages using direct path listening
       const messagesNode = this.core.db.gun.get(currentUserMessagesPath);
 
-      // Listen for new dates being added
-      messagesNode.map().on((dateData: any, date: string) => {
-        if (dateData && typeof date === "string" && date !== "_") {
-          console.log(
-            "🔧 startListeningToLegacyPaths: New date detected:",
-            date
-          );
+      // Listen for new dates being added (idempotent per date)
+      const topMap = messagesNode.map();
+      const topListener = topMap.on((dateData: any, date: string) => {
+        if (!dateData || typeof date !== "string" || date === "_") return;
 
-          // Listen for messages in this date
-          const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
-          const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
-
-          dateMessagesNode.map().on(async (messageData: any, messageId: string) => {
-            if (
-              messageData &&
-              typeof messageData === "object" &&
-              messageId !== "_"
-            ) {
-              console.log(
-                "🔧 startListeningToLegacyPaths: New message detected:",
-                messageId
-              );
-
-              // **IMPROVED: Enhanced message filtering using schema validation**
-              if (
-                this._isValidLegacyMessage(messageData, currentUserPubFromCore)
-              ) {
-                console.log(
-                  "🔧 startListeningToLegacyPaths: Valid message received:",
-                  messageId
-                );
-
-                // **IMPROVED: Use schema utility for message processing**
-                try {
-                  const currentUserPair = (this.core.db.user as any)?._?.sea;
-                  if (!currentUserPair) return;
-
-                  const senderPub = messageData.from || messageData.senderPub;
-                  const encryptedPayload: string | undefined = messageData.data || messageData.message;
-                  if (!senderPub || !encryptedPayload) return;
-
-                  const senderEpub = await this.encryptionManager.getRecipientEpub(senderPub);
-                  const sharedSecret = await this.core.db.sea.secret(senderEpub, currentUserPair);
-                  if (!sharedSecret) return;
-
-                  const decrypted = await this.core.db.sea.decrypt(encryptedPayload, sharedSecret);
-                  let content: string | null = null;
-                  if (typeof decrypted === "string") {
-                    content = decrypted;
-                  } else if (decrypted && typeof decrypted === "object") {
-                    content = typeof (decrypted as any).content === "string"
-                      ? (decrypted as any).content
-                      : JSON.stringify(decrypted);
-                  }
-                  if (!content) return; // emit only successfully decrypted
-
-                  const processedMessage = {
-                    id: messageId,
-                    from: senderPub,
-                    content,
-                    timestamp: messageData.timestamp || Date.now(),
-                  };
-
-                  callback(processedMessage);
-                } catch (_) {
-                  // silently skip non-decryptable messages
-                }
-              } else {
-                console.log(
-                  "🔧 startListeningToLegacyPaths: Message filtered out (not valid):",
-                  messageId
-                );
-              }
-            }
-          });
+        if (this._legacyDateListeners.has(date)) {
+          return; // already listening to this date bucket
         }
+
+        if (this._legacyDebug) {
+          console.log("🔧 startListeningToLegacyPaths: New date detected:", date);
+        }
+
+        // Listen for messages in this date
+        const dateMessagesPath = `${currentUserMessagesPath}/${date}`;
+        const dateMessagesNode = this.core.db.gun.get(dateMessagesPath);
+        const dateMap = dateMessagesNode.map();
+        const dateListener = dateMap.on(async (messageData: any, messageId: string) => {
+          if (!messageData || typeof messageData !== "object" || messageId === "_") return;
+
+          // Enhanced message filtering using schema validation
+          if (this._isValidLegacyMessage(messageData, currentUserPubFromCore)) {
+            try {
+              const currentUserPair = (this.core.db.user as any)?._?.sea;
+              if (!currentUserPair) return;
+
+              const senderPub = messageData.from || messageData.senderPub;
+              const encryptedPayload: string | undefined = messageData.data || messageData.message;
+              if (!senderPub || !encryptedPayload) return;
+
+              // Prefer senderEpub embedded in message, fall back to lookup
+              const embeddedSenderEpub: string | undefined = (messageData as any).senderEpub;
+              const senderEpub = embeddedSenderEpub && typeof embeddedSenderEpub === "string" && embeddedSenderEpub.length > 0
+                ? embeddedSenderEpub
+                : await this.encryptionManager.getRecipientEpub(senderPub);
+              const sharedSecret = await this.core.db.sea.secret(senderEpub, currentUserPair);
+              if (!sharedSecret) return;
+
+              const decrypted = await this.core.db.sea.decrypt(encryptedPayload, sharedSecret);
+              let content: string | null = null;
+              if (typeof decrypted === "string") {
+                content = decrypted;
+              } else if (decrypted && typeof decrypted === "object") {
+                content = typeof (decrypted as any).content === "string" ? (decrypted as any).content : JSON.stringify(decrypted);
+              }
+              if (!content) return;
+
+              const processedMessage = {
+                id: messageId,
+                from: senderPub,
+                content,
+                timestamp: messageData.timestamp || Date.now(),
+              };
+
+              callback(processedMessage);
+            } catch (_) {
+              // silently skip non-decryptable messages
+            }
+          }
+        });
+
+        // Store off handler for this date
+        this._legacyDateListeners.set(date, dateMap as any);
       });
 
-      console.log(
-        "✅ startListeningToLegacyPaths: Legacy path listeners set up successfully"
-      );
+      this._legacyTopLevelListener = topMap as any;
+      this._legacyListening = true;
+
+      if (this._legacyDebug) {
+        console.log(
+          "✅ startListeningToLegacyPaths: Legacy path listeners set up successfully"
+        );
+      }
     } catch (error) {
       console.error(
         "❌ startListeningToLegacyPaths: Error setting up listeners:",
@@ -1890,16 +1909,35 @@ export class MessagingPlugin extends BasePlugin {
    */
   public stopListeningToLegacyPaths(): void {
     try {
-      console.log(
-        "🔧 stopListeningToLegacyPaths: Cleaning up legacy path listeners"
-      );
+      if (!this._legacyListening) return;
 
-      // Note: GunDB listeners are automatically cleaned up when the plugin is destroyed
-      // This function is provided for explicit cleanup if needed
+      if (this._legacyDebug) {
+        console.log(
+          "🔧 stopListeningToLegacyPaths: Cleaning up legacy path listeners"
+        );
+      }
 
-      console.log(
-        "✅ stopListeningToLegacyPaths: Legacy path listeners cleaned up"
-      );
+      // Turn off date listeners
+      this._legacyDateListeners.forEach((ref) => {
+        if (ref && typeof (ref as any).off === "function") {
+          (ref as any).off();
+        }
+      });
+      this._legacyDateListeners.clear();
+
+      // Turn off top-level date map
+      if (this._legacyTopLevelListener && typeof (this._legacyTopLevelListener as any).off === "function") {
+        (this._legacyTopLevelListener as any).off();
+      }
+      this._legacyTopLevelListener = null;
+
+      this._legacyListening = false;
+
+      if (this._legacyDebug) {
+        console.log(
+          "✅ stopListeningToLegacyPaths: Legacy path listeners cleaned up"
+        );
+      }
     } catch (error) {
       console.error(
         "❌ stopListeningToLegacyPaths: Error cleaning up listeners:",
@@ -2315,6 +2353,9 @@ export class MessagingPlugin extends BasePlugin {
         });
       });
 
+      // Ensure there are no duplicate username mappings for the same pub
+      await this._purgeDuplicateUsernameMappingsForPub(currentUserPair.pub, username);
+
       // Update user profile with username
       const userRef = this.core.db.gun
         .get(MessagingSchema.collections.users)
@@ -2370,17 +2411,39 @@ export class MessagingPlugin extends BasePlugin {
         return { success: false, error: "User pair not available" };
       }
 
-      // Check if new username is available
+      // Check if new username is available OR if it's already owned by current user
       const isAvailable = await this.isUsernameAvailable(newUsername);
       if (!isAvailable) {
-        return {
-          success: false,
-          error: `Username "${newUsername}" is already taken`,
-        };
+        // Check if the username is already owned by the current user
+        const currentOwner = await this.getUsername(currentUserPair.pub);
+        if (currentOwner === newUsername) {
+          console.log("ℹ️ Username is already owned by current user, proceeding with update");
+          // Username is already owned by current user, proceed with update
+        } else {
+          return {
+            success: false,
+            error: `Username "${newUsername}" is already taken`,
+          };
+        }
       }
 
       // Get current username
       const currentUsername = await this.getUsername(currentUserPair.pub);
+      
+      // If the new username is the same as current, just sync profile data
+      if (currentUsername === newUsername) {
+        console.log("ℹ️ Username is the same, just syncing profile data");
+        try {
+          await this.registerUserData(newUsername, currentUserPair.epub, currentUserPair.pub);
+          return { success: true };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: error.message || "Failed to sync profile data"
+          };
+        }
+      }
+
       if (currentUsername) {
         // Remove old username mapping
         const oldUsernameRef = this.core.db.gun
@@ -2400,12 +2463,84 @@ export class MessagingPlugin extends BasePlugin {
       }
 
       // Register new username
-      return await this.registerUsername(newUsername);
+      const res = await this.registerUsername(newUsername);
+
+      // Safety: purge any duplicates that might still exist for this pub
+      if (res.success) {
+        const currentUserPair = (this.core.db.user as any)._?.sea;
+        if (currentUserPair?.pub) {
+          await this._purgeDuplicateUsernameMappingsForPub(currentUserPair.pub, newUsername);
+        }
+      }
+
+      return res;
     } catch (error: any) {
       return {
         success: false,
         error: error.message || "Failed to update username",
       };
+    }
+  }
+
+  /**
+   * Public method to enforce username consistency for a given public key.
+   * Removes duplicate username mappings, keeping only the latest one.
+   */
+  public async enforceUsernameConsistency(pub: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this._purgeDuplicateUsernameMappingsForPub(pub);
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message || "Failed to enforce username consistency"
+      };
+    }
+  }
+
+  /**
+   * Removes any username mappings that point to the provided pub,
+   * keeping only the mapping for `keepUsername` if specified.
+   * This guarantees there aren't two usernames for the same public key.
+   */
+  private async _purgeDuplicateUsernameMappingsForPub(
+    pub: string,
+    keepUsername?: string
+  ): Promise<void> {
+    if (!pub) return;
+    try {
+      const usernamesNode = this.core.db.gun.get(
+        MessagingSchema.collections.usernames
+      );
+
+      await new Promise<void>((resolve) => {
+        const toDelete: string[] = [];
+
+        const mapRef = usernamesNode.map();
+        const off = mapRef.on((data: any, key: string) => {
+          if (!data || key === "_" || typeof key !== "string") return;
+          try {
+            if (data.pub === pub && (!keepUsername || key !== keepUsername)) {
+              toDelete.push(key);
+            }
+          } catch (_) {}
+        });
+
+        // Give a short window to collect keys then remove
+        setTimeout(() => {
+          if ((off as any)?.off) {
+            (off as any).off();
+          }
+          toDelete.forEach((usernameKey) => {
+            try {
+              usernamesNode.get(usernameKey).put(null);
+            } catch (_) {}
+          });
+          resolve();
+        }, 500);
+      });
+    } catch (error) {
+      console.warn("_purgeDuplicateUsernameMappingsForPub error:", error);
     }
   }
 
