@@ -153,7 +153,7 @@ export class EncryptionManager {
       }, timeout);
 
       const recipientUser = this.core.db.gun.user(recipientPub);
-      recipientUser.get("is").on((data: any) => {
+      recipientUser.get("is").once((data: any) => {
         clearTimeout(timeoutId);
         resolve(data);
       });
@@ -172,7 +172,7 @@ export class EncryptionManager {
         reject(new Error("Timeout getting public data"));
       }, timeout);
 
-      this.core.db.gun.get("~" + recipientPub).on((data: any) => {
+      this.core.db.gun.get("~" + recipientPub).once((data: any) => {
         clearTimeout(timeoutId);
         resolve(data);
       });
@@ -192,7 +192,7 @@ export class EncryptionManager {
       }, timeout);
 
       const recipientUser = this.core.db.gun.user(recipientPub);
-      recipientUser.get("profile").on((data: any) => {
+      recipientUser.get("profile").once((data: any) => {
         clearTimeout(timeoutId);
         resolve(data);
       });
@@ -212,7 +212,7 @@ export class EncryptionManager {
       }, timeout);
 
       const recipientUser = this.core.db.gun.user(recipientPub);
-      recipientUser.get("~").on((data: any) => {
+      recipientUser.get("~").once((data: any) => {
         clearTimeout(timeoutId);
         resolve(data);
       });
@@ -231,7 +231,7 @@ export class EncryptionManager {
         reject(new Error("Timeout getting direct data"));
       }, timeout);
 
-      this.core.db.gun.get(recipientPub).on((data: any) => {
+      this.core.db.gun.get(recipientPub).once((data: any) => {
         clearTimeout(timeoutId);
         resolve(data);
       });
@@ -256,7 +256,7 @@ export class EncryptionManager {
         .get("shogun")
         .get("users")
         .get(recipientPub)
-        .on((data: any) => {
+        .once((data: any) => {
           clearTimeout(timeoutId);
           console.log("🔍 getAppUserData: Found data:", data ? "YES" : "NO", data?.epub ? "with EPUB" : "no EPUB");
           resolve(data);

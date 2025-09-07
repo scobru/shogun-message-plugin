@@ -1510,7 +1510,7 @@ cross-spawn@^7.0.3, cross-spawn@^7.0.6:
     shebang-command "^2.0.0"
     which "^2.0.1"
 
-crypto-browserify@^3.12.1:
+crypto-browserify@^3.12.0, crypto-browserify@^3.12.1:
   version "3.12.1"
   resolved "https://registry.yarnpkg.com/crypto-browserify/-/crypto-browserify-3.12.1.tgz#bb8921bec9acc81633379aa8f52d69b0b69e0dac"
   integrity sha512-r4ESw/IlusD17lgQi1O20Fa3qNnsckR126TdUuBgAu7GBYSIPvdNyONd3Zrxh0xCwA4+6w/TDArBPsMvhur+KQ==
@@ -1936,7 +1936,7 @@ graceful-fs@^4.1.2, graceful-fs@^4.2.11, graceful-fs@^4.2.4, graceful-fs@^4.2.9:
   resolved "https://registry.yarnpkg.com/graceful-fs/-/graceful-fs-4.2.11.tgz#4183e4e8bf08bb6e05bbb2f7d2e0c8f712ca40e3"
   integrity sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==
 
-gun@^0.2020.1241:
+gun@^0.2020.1240, gun@^0.2020.1241:
   version "0.2020.1241"
   resolved "https://registry.yarnpkg.com/gun/-/gun-0.2020.1241.tgz#a43de6faf046d2a9b89d1b532a9346b88a90f1ee"
   integrity sha512-rmGqLuJj4fAuZ/0lddCvXHbENPkEnBOBYpq+kXHrwQ5RdNtQ5p0Io99lD1qUXMFmtwNacQ/iqo3VTmjmMyAYZg==
@@ -3341,17 +3341,20 @@ shebang-regex@^3.0.0:
   resolved "https://registry.yarnpkg.com/shebang-regex/-/shebang-regex-3.0.0.tgz#ae16f1644d873ecad843b0307b143362d4c42172"
   integrity sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==
 
-shogun-core@^1.9.4:
-  version "1.9.4"
-  resolved "https://registry.yarnpkg.com/shogun-core/-/shogun-core-1.9.4.tgz#c2ce2152cc09ad5438b90e91b5141b62837866b8"
-  integrity sha512-keqHWcPeodV93gPYoGSC2WLBAMkeP9OPeOfEFZ7lkUtEDWeWyqZC23S8VhPEnKRoxxlXfJCEDSkTGPfV41kS+Q==
+shogun-core@^1.10.4:
+  version "1.10.4"
+  resolved "https://registry.yarnpkg.com/shogun-core/-/shogun-core-1.10.4.tgz#84097b6534efaf94ca981adecdb377bf6204aa7b"
+  integrity sha512-Xhyom5vlxAZZ1Pynje8DWxGGVT/YR4eAKc9u+XkjSR8Vt7eeoBsvYhbCKhVrVgrLFCAhb9neUJGug4fPzm0WuA==
   dependencies:
     "@noble/curves" "^1.9.1"
     ajv "^8.17.1"
     assert "^2.1.0"
     base64url "^3.0.1"
+    buffer "^6.0.3"
     constants-browserify "^1.0.0"
+    crypto-browserify "^3.12.0"
     ethers "^6.13.5"
+    gun "^0.2020.1240"
     keccak256 "^1.0.6"
     nostr-tools "^2.15.0"
     paillier-bigint "^3.4.3"
@@ -3359,6 +3362,7 @@ shogun-core@^1.9.4:
     rxjs "^7.8.2"
     uuid "^11.1.0"
     vm-browserify "^1.1.2"
+    ws "^8.18.3"
 
 side-channel-list@^1.0.0:
   version "1.0.0"
@@ -3941,6 +3945,11 @@ ws@^7.2.1:
   version "7.5.10"
   resolved "https://registry.yarnpkg.com/ws/-/ws-7.5.10.tgz#58b5c20dc281633f6c19113f39b349bd8bd558d9"
   integrity sha512-+dbF1tHwZpXcbOJdVOkzLDxZP1ailvSxM6ZweXTegylPny803bFhA+vqBYw4s31NSAk4S2Qz+AKXK9a4wkdjcQ==
+
+ws@^8.18.3:
+  version "8.18.3"
+  resolved "https://registry.yarnpkg.com/ws/-/ws-8.18.3.tgz#b56b88abffde62791c639170400c93dcb0c95472"
+  integrity sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==
 
 xtend@^4.0.2:
   version "4.0.2"

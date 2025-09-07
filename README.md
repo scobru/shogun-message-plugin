@@ -95,13 +95,14 @@ if (result.success) {
 
 ##### **NEW: Legacy Compatibility Functions**
 
-###### `sendMessageToLegacyPath(recipientPub: string, messageContent: string, options?: LegacyMessageOptions): Promise<LegacyMessageResult>`
+###### `sendMessageDirect(recipientPub: string, recipientEpub: string, messageContent: string, options?: LegacyMessageOptions): Promise<LegacyMessageResult>`
 
 Sends a message to legacy paths for compatibility with existing frontend systems.
 
 **Parameters:**
 
 - `recipientPub` (string): The recipient's public key
+- `recipientEpub` (string): The recipient's encryption public key (get it via `getRecipientEpub(recipientPub)`)
 - `messageContent` (string): The message content to send
 - `options` (LegacyMessageOptions, optional): Additional options for legacy compatibility
 
@@ -110,8 +111,10 @@ Sends a message to legacy paths for compatibility with existing frontend systems
 **Example:**
 
 ```typescript
-const result = await messagingPlugin.sendMessageToLegacyPath(
+const epub = await messagingPlugin.getRecipientEpub("recipient_public_key_here");
+const result = await messagingPlugin.sendMessageDirect(
   "recipient_public_key_here",
+  epub,
   "Hello from legacy path!",
   {
     messageType: "alias",
@@ -127,13 +130,12 @@ if (result.success) {
 }
 ```
 
-###### `receiveMessageFromLegacyPath(contactPub: string, options?: { limit?: number; before?: string; after?: string }): Promise<LegacyMessagesResult>`
+###### `receiveMessageDirect(options?: { limit?: number; before?: string; after?: string }): Promise<LegacyMessagesResult>`
 
 Receives messages from legacy paths for compatibility with existing frontend systems.
 
 **Parameters:**
 
-- `contactPub` (string): The contact's public key
 - `options` (object, optional): Options for message retrieval
 
 **Returns:** Promise<LegacyMessagesResult>
@@ -141,10 +143,7 @@ Receives messages from legacy paths for compatibility with existing frontend sys
 **Example:**
 
 ```typescript
-const result = await messagingPlugin.receiveMessageFromLegacyPath(
-  "contact_public_key_here",
-  { limit: 50 }
-);
+const result = await messagingPlugin.receiveMessageDirect({ limit: 50 });
 
 if (result.success) {
   console.log("Messages received from legacy path:", result.messages?.length);
@@ -153,26 +152,22 @@ if (result.success) {
 }
 ```
 
-###### `startListeningToLegacyPaths(contactPub: string, callback: (message: any) => void): void`
+###### `startListeningDirect(callback: (message: any) => void): void`
 
 Starts listening to legacy paths for real-time message compatibility.
 
 **Parameters:**
 
-- `contactPub` (string): The contact's public key (currently unused, kept for API compatibility)
 - `callback` (function): Function to call when a new message is received
 
-**Note:** The `contactPub` parameter is currently kept for API compatibility but is not used in the filtering logic. The function listens for ALL incoming messages to the current user, not just from a specific contact, to ensure proper message delivery.
+**Note:** The function listens for ALL incoming messages to the current user (recipient), not filtered to a specific contact, to ensure proper message delivery.
 
 **Example:**
 
 ```typescript
-messagingPlugin.startListeningToLegacyPaths(
-  "contact_public_key_here",
-  (message) => {
-    console.log("New message from legacy path:", message);
-  }
-);
+messagingPlugin.startListeningDirect((message) => {
+  console.log("New message from legacy path:", message);
+});
 ```
 
 ###### `stopListeningToLegacyPaths(): void`
@@ -497,7 +492,7 @@ await messagingPlugin.startListening();
 await messagingPlugin.stopListening();
 ```
 
-#### `onMessage(callback: (message: DecryptedMessage) => void): void`
+#### `onMessage(callback: (message: MessageData) => void): void`
 
 **PRODUCTION READY**: Registers a callback for incoming messages with enhanced filtering.
 
@@ -517,7 +512,7 @@ await messagingPlugin.stopListening();
 ```typescript
 messagingPlugin.onMessage((message) => {
   console.log("Received message:", message.content);
-  console.log("From:", message.sender);
+  console.log("From:", message.from);
   console.log("Timestamp:", message.timestamp);
 });
 ```
@@ -743,7 +738,7 @@ const hasListener = messagingPlugin.hasActivePublicRoomListener("general_chat");
 console.log("Public room has listener:", hasListener);
 ```
 
-#### `getPublicRoomMessages(roomId: string, limit?: number): Promise<any[]>`
+#### `getPublicRoomMessages(roomId: string, options?: { limit?: number; before?: string; after?: string }): Promise<any[]>`
 
 Gets public room messages from localStorage.
 
@@ -757,7 +752,7 @@ Gets public room messages from localStorage.
 **Example:**
 
 ```typescript
-const messages = await messagingPlugin.getPublicRoomMessages("general_chat", 50);
+const messages = await messagingPlugin.getPublicRoomMessages("general_chat", { limit: 50 });
 console.log("Public room messages:", messages);
 ```
 
@@ -797,23 +792,24 @@ Stops listening to token rooms.
 messagingPlugin.stopListeningTokenRooms();
 ```
 
-#### `startTokenRoomMessageListener(roomId: string): Promise<void>`
+#### `startTokenRoomMessageListener(roomId: string, callback: (message: any) => void): Promise<{ success: boolean; error?: string }>`
 
 Starts listening to messages from a specific token room.
 
 **Parameters:**
 
 - `roomId` (string): The token room identifier
+- `callback` (function): Callback invoked for each incoming token-room message
 
-**Returns:** Promise<void>
+**Returns:** Promise<{ success: boolean; error?: string }>
 
 **Example:**
 
 ```typescript
-await messagingPlugin.startTokenRoomMessageListener("private_room_456");
+await messagingPlugin.startTokenRoomMessageListener("private_room_456", (m) => console.log(m));
 ```
 
-#### `stopTokenRoomMessageListener(roomId: string): Promise<void>`
+#### `stopTokenRoomMessageListener(roomId: string): Promise<{ success: boolean; error?: string }>`
 
 Stops listening to messages from a specific token room.
 
@@ -821,7 +817,7 @@ Stops listening to messages from a specific token room.
 
 - `roomId` (string): The token room identifier
 
-**Returns:** Promise<void>
+**Returns:** Promise<{ success: boolean; error?: string }>
 
 **Example:**
 
@@ -1062,40 +1058,12 @@ console.log("Existing messages:", messages);
 
 ### Message Content Management
 
-#### `setMessageContent(contactPub: string, messageId: string, newContent: string): Promise<{ success: boolean; error?: string }>`
-
-Updates the content of a specific message.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-- `messageId` (string): The message identifier
-- `newContent` (string): The new message content
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.setMessageContent(
-  "contact_public_key",
-  "message_123",
-  "Updated message content"
-);
-if (result.success) {
-  console.log("Message content updated successfully");
-} else {
-  console.error("Failed to update message content:", result.error);
-}
-```
-
-#### `removeMessage(contactPub: string, messageId: string): Promise<{ success: boolean; error?: string }>`
+#### `removeMessage(messageId: string): Promise<{ success: boolean; error?: string }>`
 
 Removes a specific message.
 
 **Parameters:**
 
-- `contactPub` (string): The contact's public key
 - `messageId` (string): The message identifier
 
 **Returns:** Promise<{ success: boolean; error?: string }>
@@ -1103,7 +1071,7 @@ Removes a specific message.
 **Example:**
 
 ```typescript
-const result = await messagingPlugin.removeMessage("contact_public_key", "message_123");
+const result = await messagingPlugin.removeMessage("message_123");
 if (result.success) {
   console.log("Message removed successfully");
 } else {
@@ -1111,26 +1079,22 @@ if (result.success) {
 }
 ```
 
-#### `removeConversationMessages(contactPub: string, messageIds: string[]): Promise<{ success: boolean; error?: string }>`
+#### `removeConversationMessages(contactPub: string): Promise<{ success: boolean; removedCount: number; error?: string }>`
 
 Removes multiple messages from a conversation.
 
 **Parameters:**
 
 - `contactPub` (string): The contact's public key
-- `messageIds` (string[]): Array of message identifiers to remove
 
-**Returns:** Promise<{ success: boolean; error?: string }>
+**Returns:** Promise<{ success: boolean; removedCount: number; error?: string }>
 
 **Example:**
 
 ```typescript
-const result = await messagingPlugin.removeConversationMessages(
-  "contact_public_key",
-  ["message_123", "message_456"]
-);
+const result = await messagingPlugin.removeConversationMessages("contact_public_key");
 if (result.success) {
-  console.log("Messages removed successfully");
+  console.log("Messages removed:", result.removedCount);
 } else {
   console.error("Failed to remove messages:", result.error);
 }
@@ -1202,9 +1166,9 @@ const epub = await messagingPlugin.getRecipientEpub("recipient_public_key");
 console.log("Recipient epub:", epub);
 ```
 
-#### `publishUserEpub(): Promise<{ success: boolean; error?: string }>`
+#### `publishUserEpub(epub?: string): Promise<{ success: boolean; error?: string }>`
 
-Publishes the current user's encryption public key.
+Publishes the current user's encryption public key. If `epub` is provided, publishes that value; otherwise auto-publishes the current user's epub.
 
 **Returns:** Promise<{ success: boolean; error?: string }>
 
@@ -1257,7 +1221,7 @@ if (epub) {
 }
 ```
 
-#### `joinTokenRoom(roomId: string, token: string): Promise<{ success: boolean; error?: string }>`
+#### `joinTokenRoom(roomId: string, token: string): Promise<{ success: boolean; roomData?: any; error?: string }>`
 
 Joins a token room with the provided token.
 
@@ -1266,7 +1230,7 @@ Joins a token room with the provided token.
 - `roomId` (string): The token room identifier
 - `token` (string): The token required for room access
 
-**Returns:** Promise<{ success: boolean; error?: string }>
+**Returns:** Promise<{ success: boolean; roomData?: any; error?: string }>
 
 **Example:**
 
@@ -1280,23 +1244,6 @@ if (result.success) {
 ```
 
 ### Debug and Development
-
-#### `debugGunDBStructure(recipientPub: string): Promise<any>`
-
-Debug utility to inspect GunDB structure for a recipient.
-
-**Parameters:**
-
-- `recipientPub` (string): The recipient's public key
-
-**Returns:** Promise<any>
-
-**Example:**
-
-```typescript
-const structure = await messagingPlugin.debugGunDBStructure("recipient_public_key");
-console.log("GunDB structure:", structure);
-```
 
 #### `debugMessagePaths(contactPub: string): Promise<void>`
 
@@ -1330,7 +1277,7 @@ messagingPlugin.registerConversationPathListener("conversation_path_here");
 
 ### Listener Status and Management
 
-#### `getListenerStatus(): { isListening: boolean; messageListenersCount: number; processedMessagesCount: number; hasActiveListener: boolean }`
+#### `getListenerStatus(): { isListening: boolean; isListeningGroups: boolean; isListeningTokenRooms: boolean; messageListenersCount: number; groupListenersCount: number; tokenRoomListenersCount: number; processedMessagesCount: number; clearedConversationsCount: number; hasActiveListener: boolean }`
 
 Gets the current status of all listeners.
 
@@ -1342,8 +1289,13 @@ Gets the current status of all listeners.
 const status = messagingPlugin.getListenerStatus();
 console.log("Listener status:", {
   isListening: status.isListening,
+  isListeningGroups: status.isListeningGroups,
+  isListeningTokenRooms: status.isListeningTokenRooms,
   messageListenersCount: status.messageListenersCount,
+  groupListenersCount: status.groupListenersCount,
+  tokenRoomListenersCount: status.tokenRoomListenersCount,
   processedMessagesCount: status.processedMessagesCount,
+  clearedConversationsCount: status.clearedConversationsCount,
   hasActiveListener: status.hasActiveListener
 });
 ```

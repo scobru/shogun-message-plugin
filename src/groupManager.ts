@@ -266,6 +266,15 @@ export class GroupManager {
         encryptedKeys,
       };
 
+      // Sign the encryptedKeys map for integrity (by creator)
+      try {
+        const keysPayload = JSON.stringify(encryptedKeys, Object.keys(encryptedKeys).sort());
+        const keysSignature = await this.core.db.sea.sign(keysPayload, currentUserPair);
+        if (typeof keysSignature === "string") {
+          (groupData as any).keysSignature = keysSignature;
+        }
+      } catch (_) {}
+
       // Log the data structure for debugging
       console.log("🔍 createGroup: Group data structure:", {
         id: groupData.id,
@@ -314,8 +323,22 @@ export class GroupManager {
                 );
                 reject(new Error(`Error saving encrypted keys: ${ack3.err}`));
               } else {
-                console.log("🔍 createGroup: Group data saved successfully");
-                resolve();
+                // Save keys signature if present
+                const sig = (groupData as any).keysSignature;
+                if (sig) {
+                  groupNode.get("keysSignature").put(sig, (ack4: any) => {
+                    if (ack4 && ack4.err) {
+                      console.error("🔍 createGroup: Error saving keysSignature:", ack4);
+                      reject(new Error(`Error saving keys signature: ${ack4.err}`));
+                    } else {
+                      console.log("🔍 createGroup: Group data saved successfully");
+                      resolve();
+                    }
+                  });
+                } else {
+                  console.log("🔍 createGroup: Group data saved successfully");
+                  resolve();
+                }
               }
             });
           });
@@ -434,8 +457,11 @@ export class GroupManager {
   ): Promise<any[]> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return [];
+      }
       const localStorageKey = MessagingSchema.groups.localStorage(groupId);
-      const storedMessages = localStorage.getItem(localStorageKey);
+      const storedMessages = window.localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
         const messages = JSON.parse(storedMessages);
@@ -463,9 +489,12 @@ export class GroupManager {
   ): Promise<void> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return;
+      }
       const localStorageKey = MessagingSchema.groups.localStorage(groupId);
       const existingMessages = JSON.parse(
-        localStorage.getItem(localStorageKey) || "[]"
+        window.localStorage.getItem(localStorageKey) || "[]"
       );
 
       // Add new message
@@ -474,7 +503,7 @@ export class GroupManager {
       // Keep only last 1000 messages to prevent localStorage overflow
       const trimmedMessages = updatedMessages.slice(-1000);
 
-      localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
+      window.localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
       console.log(
         "📱 Group: Saved message to localStorage for group:",
         groupId
@@ -856,7 +885,23 @@ export class GroupManager {
           createdBy: data.createdBy,
           createdAt: data.createdAt,
           encryptedKeys: normalizedEncryptedKeys, // Use the explicitly fetched keys
+          keysSignature: data.keysSignature,
         };
+
+        // Verify keysSignature if present (best-effort)
+        try {
+          if (groupData.keysSignature && groupData.createdBy) {
+            const keysPayload = JSON.stringify(groupData.encryptedKeys, Object.keys(groupData.encryptedKeys).sort());
+            const isValid = await this.encryptionManager.verifyMessageSignature(
+              keysPayload,
+              groupData.keysSignature,
+              groupData.createdBy
+            );
+            if (!isValid) {
+              console.warn("🔍 getGroupData: Invalid keysSignature detected for group", groupId);
+            }
+          }
+        } catch (_) {}
         return groupData;
       }
       return null;

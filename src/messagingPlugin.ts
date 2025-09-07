@@ -250,6 +250,19 @@ export class MessagingPlugin extends BasePlugin {
           "private"
         );
 
+        // Also send to recipient's safe path to maintain backward-compatible listening
+        const recipientSafePath = createSafePath(recipientPub);
+        await sendToGunDB(
+          this.core,
+          recipientSafePath,
+          messageId,
+          encryptedMessageData,
+          "private"
+        );
+
+        // Ensure a conversation listener is active for this pair
+        this.registerConversationPathListener(conversationPath);
+
         // **FIXED: Don't send to sender's own path - this creates confusion**
         // The sender will receive the message through the listening system
         // This prevents duplicate messages and ensures proper message flow
@@ -954,6 +967,35 @@ export class MessagingPlugin extends BasePlugin {
             await this.tokenRoomManager.startListeningToRoom(roomId, token);
           }
         }
+      }
+
+      // Activate listeners for private conversations discovered from localStorage
+      try {
+        if (typeof window !== "undefined" && window.localStorage && this.core.isLoggedIn()) {
+          const currentUserPub = (this.core.db.user as any)?._?.sea?.pub;
+          if (currentUserPub) {
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i) || "";
+              if (key.startsWith("shogun_messages_")) {
+                const conversationId = key.replace("shogun_messages_", "");
+                const parts = conversationId.split("_");
+                if (parts.length === 2) {
+                  const contactPub = parts[0] === currentUserPub ? parts[1] : (parts[1] === currentUserPub ? parts[0] : null);
+                  if (contactPub) {
+                    const conversationPath = createConversationPath(currentUserPub, contactPub);
+                    console.log(
+                      "🔍 _activateExistingListeners: Registering conversation listener for",
+                      conversationPath
+                    );
+                    this.registerConversationPathListener(conversationPath);
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("_activateExistingListeners: localStorage scan failed", e);
       }
     } catch (error) {
       console.warn(

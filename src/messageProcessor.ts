@@ -34,6 +34,7 @@ import {
   debounceTime,
   mergeMap,
 } from "rxjs/operators";
+import { getConfig } from "./config";
 
 /**
  * Enhanced message processing and listener management for the messaging plugin
@@ -60,8 +61,8 @@ export class MessageProcessor {
 
   // Configuration
   private readonly MAX_PROCESSED_MESSAGES = 1000;
-  private readonly MESSAGE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-  private readonly DECRYPTION_TIMEOUT = 10000; // 10 seconds
+  private readonly MESSAGE_TTL = getConfig().localStorageCleanupInterval || 24 * 60 * 60 * 1000;
+  private readonly DECRYPTION_TIMEOUT = getConfig().encryptionTimeout || 10000;
   private readonly RETRY_ATTEMPTS = 3;
   private readonly DEBOUNCE_TIME = 100; // 100ms debounce time
   private clearedConversations = new Set<string>();
@@ -105,7 +106,7 @@ export class MessageProcessor {
       disableRxJS = process.env.DISABLE_RXJS === "true";
     } else if (typeof window !== 'undefined') {
       // Browser environment
-      disableRxJS = (window as any).DISABLE_RXJS === "true" || true; // Force disable in browser
+      disableRxJS = (window as any).DISABLE_RXJS === "true"; // Allow enabling via window flag
     } else {
       // Fallback
       disableRxJS = true;
@@ -489,7 +490,7 @@ export class MessageProcessor {
         decryptedMessage
       );
 
-      // Verify signature if present
+      // Enforce signature verification for private messages
       if (decryptedMessage.signature) {
         const dataToVerify = JSON.stringify(
           {
@@ -511,6 +512,10 @@ export class MessageProcessor {
           this.processedMessageIds.delete(messageId);
           return;
         }
+      } else {
+        console.log("🚀 processIncomingMessage: Missing signature, skipping");
+        this.processedMessageIds.delete(messageId);
+        return;
       }
 
       // Check if conversation is cleared
@@ -1333,7 +1338,10 @@ export class MessageProcessor {
       const localStorageKey = `shogun_messages_${conversationId}`;
 
       try {
-        const storedMessages = localStorage.getItem(localStorageKey);
+        if (typeof window === "undefined" || !window.localStorage) {
+          return [];
+        }
+        const storedMessages = window.localStorage.getItem(localStorageKey);
         if (storedMessages) {
           const messages = JSON.parse(storedMessages);
           console.log(
@@ -1505,8 +1513,8 @@ export class MessageProcessor {
         let totalMessages = 0;
         let completedOperations = 0;
         let hasError = false;
-        let timeoutId: NodeJS.Timeout;
-        let operationTimeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
+        let operationTimeoutId: ReturnType<typeof setTimeout>;
         let hasStartedProcessing = false;
 
         const checkCompletion = () => {
@@ -1780,7 +1788,7 @@ export class MessageProcessor {
         let totalMessages = 0;
         let completedOperations = 0;
         let hasError = false;
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout>;
         let hasStartedProcessing = false;
 
         const checkCompletion = () => {
@@ -2127,7 +2135,7 @@ export class MessageProcessor {
       const items: any[] = [];
       let totalItems = 0;
       let completedItems = 0;
-      let timeoutId: NodeJS.Timeout;
+      let timeoutId: ReturnType<typeof setTimeout>;
 
       const checkCompletion = () => {
         if (completedItems === totalItems && totalItems > 0) {

@@ -116,6 +116,7 @@ export interface GroupData {
   admins?: string[]; // Array of admin public keys
   lastActivity?: number; // Last activity timestamp
   encryptedKeys: { [memberPub: string]: string }; // Encrypted copies of group key for each member
+  keysSignature?: string; // Signature by creator over encryptedKeys for integrity
 }
 
 // Listener types

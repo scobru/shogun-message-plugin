@@ -908,8 +908,11 @@ export class TokenRoomManager {
   private async _loadMessagesFromLocalStorage(roomId: string): Promise<any[]> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return [];
+      }
       const localStorageKey = MessagingSchema.tokenRooms.localStorage(roomId);
-      const storedMessages = localStorage.getItem(localStorageKey);
+      const storedMessages = window.localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
         const messages = JSON.parse(storedMessages);
@@ -940,9 +943,12 @@ export class TokenRoomManager {
   ): Promise<void> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return;
+      }
       const localStorageKey = MessagingSchema.tokenRooms.localStorage(roomId);
       const existingMessages = JSON.parse(
-        localStorage.getItem(localStorageKey) || "[]"
+        window.localStorage.getItem(localStorageKey) || "[]"
       );
 
       // Add new message
@@ -951,7 +957,7 @@ export class TokenRoomManager {
       // Keep only last 1000 messages to prevent localStorage overflow
       const trimmedMessages = updatedMessages.slice(-1000);
 
-      localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
+      window.localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
       console.log(
         "📱 TokenRoom: Saved message to localStorage for room:",
         roomId

@@ -77,8 +77,11 @@ export class PublicRoomManager {
   ): Promise<any[]> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return [];
+      }
       const localStorageKey = MessagingSchema.publicRooms.localStorage(roomId);
-      const storedMessages = localStorage.getItem(localStorageKey);
+      const storedMessages = window.localStorage.getItem(localStorageKey);
 
       if (storedMessages) {
         const messages = JSON.parse(storedMessages);
@@ -109,9 +112,12 @@ export class PublicRoomManager {
   ): Promise<void> {
     try {
       // **IMPROVED: Use schema for localStorage key**
+      if (typeof window === "undefined" || !window.localStorage) {
+        return;
+      }
       const localStorageKey = MessagingSchema.publicRooms.localStorage(roomId);
       const existingMessages = JSON.parse(
-        localStorage.getItem(localStorageKey) || "[]"
+        window.localStorage.getItem(localStorageKey) || "[]"
       );
 
       // Add new message
@@ -120,7 +126,7 @@ export class PublicRoomManager {
       // Keep only last 1000 messages to prevent localStorage overflow
       const trimmedMessages = updatedMessages.slice(-1000);
 
-      localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
+      window.localStorage.setItem(localStorageKey, JSON.stringify(trimmedMessages));
       console.log(
         "📱 PublicRoom: Saved message to localStorage for room:",
         roomId
@@ -276,6 +282,21 @@ export class PublicRoomManager {
         );
         return null;
       }
+
+      // Verify signature if present for authenticity (best-effort)
+      try {
+        if (messageData.signature && typeof messageData.signature === "string") {
+          const isValid = await this.encryptionManager.verifyMessageSignature(
+            messageData.content,
+            messageData.signature,
+            messageData.from
+          );
+          if (!isValid) {
+            console.log("🔍 _processIncomingPublicRoomMessage: Invalid signature, skipping");
+            return null;
+          }
+        }
+      } catch (_) {}
 
       // Create message object (public messages are not encrypted)
       const processedMessage = {
@@ -482,7 +503,7 @@ export class PublicRoomManager {
     if (!this.core.isLoggedIn()) return;
 
     try {
-      const roomsNode = this.core.db.gun.get("public_rooms");
+      const roomsNode = this.core.db.gun.get(MessagingSchema.collections.publicRooms);
       const roomNode = roomsNode.get(roomId);
 
       // **IMPROVED: Get current room data**
