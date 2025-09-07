@@ -1,6 +1,6 @@
 {
   "name": "shogun-message-plugin",
-  "version": "1.3.24",
+  "version": "1.3.25",
   "description": "End-to-end encrypted messaging plugin for Shogun SDK",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "gun": "^0.2020.1241",
-    "shogun-core": "^1.9.4",
+    "shogun-core": "^1.10.4",
     "yarn": "^1.22.22"
   },
   "devDependencies": {
