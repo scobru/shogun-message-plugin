@@ -164,7 +164,7 @@ export function generateTokenRoomId(): string {
 export async function sendToGunDB(
   core: ShogunCore,
   path: string,
-  messageId: string,
+  messageId: string | number,
   messageData: any,
   type: "private" | "public" | "group",
   senderPub?: string
@@ -193,9 +193,31 @@ export async function sendToGunDB(
 
   const messageNode = core.db.gun.get(safePath);
 
+  // Ensure a safe string ID for Radisk/Radix
+  let safeId = typeof messageId === "string" ? messageId : String(messageId);
+  if (!/^[A-Za-z0-9._-]+$/.test(safeId)) {
+    safeId = `msg_${safeId.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+  }
+
+  // Guard against writing bare primitives that can confuse Radisk internals
+  const normalizeForRadisk = (value: any): any => {
+    if (value === null) return null;
+    const t = typeof value;
+    if (t === "string" || t === "boolean") return value;
+    if (t === "number") return value; // numbers inside objects are fine
+    if (t !== "object") return String(value);
+    if (Array.isArray(value)) return value.map(normalizeForRadisk);
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      // Prevent undefined writes; keep numbers and strings as-is
+      if (v !== undefined) out[k] = normalizeForRadisk(v);
+    }
+    return out;
+  };
+
   return new Promise<void>((resolve, reject) => {
     try {
-      messageNode.get(messageId).put(messageData, (ack: any) => {
+      messageNode.get(safeId).put(normalizeForRadisk(messageData), (ack: any) => {
         if (ack.err) {
           reject(new Error(ack.err));
         } else {

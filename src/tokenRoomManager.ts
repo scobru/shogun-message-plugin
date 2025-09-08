@@ -63,6 +63,14 @@ export class TokenRoomManager {
   private readonly ENABLE_PAGINATION: boolean;
   private readonly PAGE_SIZE: number;
 
+  // **NEW: Performance metrics tracking**
+  private performanceMetrics = {
+    messagesSent: 0,
+    averageResponseTime: 0,
+    totalResponseTime: 0,
+    responseCount: 0,
+  };
+
   private options: TokenRoomManagerOptions;
 
   constructor(
@@ -395,6 +403,8 @@ export class TokenRoomManager {
     messageContent: string,
     token: string
   ): Promise<MessageResponse> {
+    const startTime = performance.now();
+    
     // Ensure initialization
     await this.initialize();
 
@@ -510,6 +520,10 @@ export class TokenRoomManager {
         roomId,
         messageId,
       });
+      
+      // **NEW: Update performance metrics**
+      this.performanceMetrics.messagesSent++;
+      
       return { success: true, messageId };
     } catch (error) {
       this.emitStatus({
@@ -518,6 +532,14 @@ export class TokenRoomManager {
         error: String(error),
       });
       return { success: false, error: String(error) };
+    } finally {
+      // **NEW: Track response time**
+      const responseTime = performance.now() - startTime;
+      this.performanceMetrics.totalResponseTime += responseTime;
+      this.performanceMetrics.responseCount++;
+      this.performanceMetrics.averageResponseTime =
+        this.performanceMetrics.totalResponseTime /
+        this.performanceMetrics.responseCount;
     }
   }
 
@@ -798,15 +820,10 @@ export class TokenRoomManager {
         console.warn("🔍 _processIncomingMessage: No listeners registered!");
       }
 
+      // **OPTIMIZED: Call listeners with minimal logging to improve performance**
       this.tokenRoomListeners.forEach((callback, index) => {
         try {
-          console.log(
-            `🔍 _processIncomingMessage: Calling listener ${index + 1}/${this.tokenRoomListeners.length}`
-          );
           callback(decryptedMessage);
-          console.log(
-            `🔍 _processIncomingMessage: Listener ${index + 1} completed successfully`
-          );
         } catch (error) {
           console.error("🔍 _processIncomingMessage: Listener error", error);
         }
@@ -1467,6 +1484,13 @@ export class TokenRoomManager {
       listeners: this.tokenRoomListeners.length,
       processedMessages: this.processedMessageIds.size,
     };
+  }
+
+  /**
+   * **NEW: Get performance metrics**
+   */
+  public getPerformanceMetrics(): any {
+    return { ...this.performanceMetrics };
   }
 
   private emitStatus(event: { type: string; [key: string]: any }): void {

@@ -10,6 +10,14 @@ import { MessagingSchema } from "./schema";
 export class GroupManager {
   private core: ShogunCore;
   private encryptionManager: EncryptionManager;
+  
+  // **NEW: Performance metrics tracking**
+  private performanceMetrics = {
+    messagesSent: 0,
+    averageResponseTime: 0,
+    totalResponseTime: 0,
+    responseCount: 0,
+  };
 
   constructor(core: ShogunCore, encryptionManager: EncryptionManager) {
     this.core = core;
@@ -688,6 +696,8 @@ export class GroupManager {
     groupId: string,
     messageContent: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    const startTime = performance.now();
+    
     console.log(
       "🔍 GroupManager.sendGroupMessage: Starting for group",
       groupId
@@ -790,7 +800,7 @@ export class GroupManager {
       };
 
       // Send to the group's message node
-      const messagePath = `group-messages/${groupId}`;
+      const messagePath = MessagingSchema.groups.messages(groupId);
       console.log(
         "🔍 GroupManager.sendGroupMessage: Sending to path",
         messagePath
@@ -815,6 +825,10 @@ export class GroupManager {
       console.log(
         "🔍 GroupManager.sendGroupMessage: Message sent successfully"
       );
+      
+      // **NEW: Update performance metrics**
+      this.performanceMetrics.messagesSent++;
+      
       return { success: true, messageId };
     } catch (error: any) {
       return {
@@ -823,6 +837,14 @@ export class GroupManager {
           error.message ||
           "Unknown error while sending group message",
       };
+    } finally {
+      // **NEW: Track response time**
+      const responseTime = performance.now() - startTime;
+      this.performanceMetrics.totalResponseTime += responseTime;
+      this.performanceMetrics.responseCount++;
+      this.performanceMetrics.averageResponseTime =
+        this.performanceMetrics.totalResponseTime /
+        this.performanceMetrics.responseCount;
     }
   }
 
@@ -1034,6 +1056,13 @@ export class GroupManager {
     );
 
     return groupKey || undefined;
+  }
+
+  /**
+   * **NEW: Get performance metrics**
+   */
+  public getPerformanceMetrics(): any {
+    return { ...this.performanceMetrics };
   }
 
   /**

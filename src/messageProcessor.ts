@@ -1,4 +1,4 @@
-import { ShogunCore } from "shogun-core";
+import { GunInstance, ShogunCore } from "shogun-core";
 import {
   MessageData,
   MessageListener,
@@ -13,39 +13,34 @@ import {
   DebugGunDBResult,
 } from "./types";
 import {
+  AsyncLock,
+  AtomicMessageDeduplicator,
+} from "./concurrencyImprovements";
+import { LRUCache, MessageObjectPool } from "./performanceOptimizations";
+import { InputValidator, RateLimiter } from "./securityEnhancements";
+import {
   createSafePath,
   createConversationPath,
-  cleanupExpiredEntries,
-  limitMapSize,
 } from "./utils";
 import { EncryptionManager } from "./encryption";
 import { GroupManager } from "./groupManager";
+import { PublicRoomManager } from "./publicRoomManager";
+import { TokenRoomManager } from "./tokenRoomManager";
 import { MessagingSchema } from "./schema";
-import { Observable, from, of, throwError, timer } from "rxjs";
-import {
-  map,
-  filter,
-  distinctUntilChanged,
-  catchError,
-  switchMap,
-  timeout,
-  retry,
-  tap,
-  debounceTime,
-  mergeMap,
-} from "rxjs/operators";
 import { getConfig } from "./config";
 
 /**
  * Enhanced message processing and listener management for the messaging plugin
- * Now with RxJS integration for better reactive programming and performance
+ * Optimized for performance and efficiency
  */
 export class MessageProcessor {
   private core: ShogunCore;
   private encryptionManager: EncryptionManager;
   private groupManager: GroupManager;
+  private publicRoomManager: PublicRoomManager;
+  private tokenRoomManager: TokenRoomManager;
 
-  // Message handling with RxJS
+  // Message handling
   private messageListeners: MessageListener[] = [];
   private groupMessageListenersInternal: GroupMessageListener[] = [];
   private _isListening = false;
@@ -53,18 +48,32 @@ export class MessageProcessor {
   private retryAttempts = new Map<string, number>(); // Track retry attempts
   private lastNullMessageLog = 0; // Rate limiter for null message logs
   private lastTraditionalNullLog = 0; // Rate limiter for traditional listener null logs
-  private subscriptions: any[] = [];
   private groupSubscriptions = new Map<string, any>();
   private conversationSubscriptions = new Map<string, any>(); // For conversation listeners
-  // privateMessageListener removed - using conversationListeners instead
   private conversationListeners: any[] = []; // Added for conversation path listening
+
+  // **NEW: Batch notifications to reduce per-message handler cost**
+  private _batchedNotifyQueue: MessageData[] = [];
+  private _batchedNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // **FIXED: Replace simple cache with atomic deduplicator**
+  private atomicDeduplicator: AtomicMessageDeduplicator;
+  private operationLock: AsyncLock;
+
+  // **FIXED: Memory management with LRU cache and object pooling**
+  private messageObjectPool: MessageObjectPool;
+  private lruCache: LRUCache<string, any>;
+
+  // **FIXED: Security components**
+  private inputValidator: InputValidator;
+  private rateLimiter: RateLimiter;
 
   // Configuration
   private readonly MAX_PROCESSED_MESSAGES = 1000;
-  private readonly MESSAGE_TTL = getConfig().localStorageCleanupInterval || 24 * 60 * 60 * 1000;
+  private readonly MESSAGE_TTL =
+    getConfig().localStorageCleanupInterval || 24 * 60 * 60 * 1000;
   private readonly DECRYPTION_TIMEOUT = getConfig().encryptionTimeout || 10000;
   private readonly RETRY_ATTEMPTS = 3;
-  private readonly DEBOUNCE_TIME = 100; // 100ms debounce time
   private clearedConversations = new Set<string>();
 
   // Persistence for cleared conversations
@@ -73,16 +82,35 @@ export class MessageProcessor {
   constructor(
     core: ShogunCore,
     encryptionManager: EncryptionManager,
-    groupManager: GroupManager
+    groupManager: GroupManager,
+    publicRoomManager: PublicRoomManager,
+    tokenRoomManager: TokenRoomManager
   ) {
     this.core = core;
     this.encryptionManager = encryptionManager;
     this.groupManager = groupManager;
+    this.publicRoomManager = publicRoomManager;
+    this.tokenRoomManager = tokenRoomManager;
     this.loadClearedConversations();
+
+    // **FIXED: Initialize atomic deduplicator and operation lock**
+    this.atomicDeduplicator = new AtomicMessageDeduplicator(
+      this.MAX_PROCESSED_MESSAGES,
+      this.MESSAGE_TTL
+    );
+    this.operationLock = new AsyncLock();
+
+    // **FIXED: Initialize memory management components**
+    this.messageObjectPool = new MessageObjectPool(100);
+    this.lruCache = new LRUCache<string, any>(500); // Reduced from 1000
+
+    // **FIXED: Initialize security components**
+    this.inputValidator = new InputValidator();
+    this.rateLimiter = new RateLimiter();
   }
 
   /**
-   * Enhanced startListening with RxJS integration
+   * Start listening for messages
    */
   public async startListening(): Promise<void> {
     if (!this.core.isLoggedIn() || this._isListening || !this.core.db.user) {
@@ -98,233 +126,148 @@ export class MessageProcessor {
     const currentUserPub = currentUserPair.pub;
     const currentUserEpub = currentUserPair.epub;
 
-    // 🔧 CROSS-PLATFORM: Gestione sia Node.js che browser
-    let disableRxJS: boolean;
-    
-    if (typeof process !== 'undefined' && process.env) {
-      // Node.js environment
-      disableRxJS = process.env.DISABLE_RXJS === "true";
-    } else if (typeof window !== 'undefined') {
-      // Browser environment
-      disableRxJS = (window as any).DISABLE_RXJS === "true"; // Allow enabling via window flag
-    } else {
-      // Fallback
-      disableRxJS = true;
-    }
-
-    console.log("🚀 startListening: Checking RxJS availability:", {
-      hasDbRx: !!(this.core.db as any).rx,
-      dbRxType: typeof (this.core.db as any).rx,
-      coreKeys: Object.keys(this.core),
-      dbKeys: Object.keys(this.core.db || {}),
-      disableRxJS,
-      environment: typeof process !== 'undefined' ? 'node' : 'browser',
-    });
-
-    if (
-      disableRxJS ||
-      !(this.core.db as any).rx ||
-      typeof (this.core.db as any).rx !== "function"
-    ) {
-      console.log(
-        "🚀 startListening: Using traditional method (RxJS disabled or unavailable)"
-      );
+    // Use traditional method for stability
       await this.startListeningTraditional(
         currentUserEpub,
         currentUserPair,
         currentUserPub
       );
-      return;
-    }
-
-    try {
-      // Use RxJS for reactive message listening
-      await this.startListeningWithRx(currentUserPair, currentUserPub);
-    } catch (error) {
-      console.error(
-        "🚀 startListening: RxJS failed, falling back to traditional method:",
-        error
-      );
-      await this.startListeningTraditional(
-        currentUserEpub,
-        currentUserPair,
-        currentUserPub
-      );
-    }
   }
 
-  /**
-   * Start listening with RxJS for reactive message handling
-   */
-  private async startListeningWithRx(
-    currentUserPair: UserPair,
-    currentUserPub: string
-  ): Promise<void> {
-    console.log(
-      "🚀 startListeningWithRx: Using RxJS for reactive listening..."
-    );
-
-    try {
-      // Get the RxJS instance from the core
-      const rx = (this.core.db as any).rx;
-      if (!rx) {
-        throw new Error("RxJS not available in core");
-      }
-
-      // Check if rx.observe exists and is a function
-      if (!rx.observe || typeof rx.observe !== "function") {
-        throw new Error("rx.observe is not available or not a function");
-      }
-
-      // Listen on the current user's path for messages
-      const currentUserSafePath = createSafePath(currentUserPub);
-      console.log(
-        "🚀 startListeningWithRx: Observing user path:",
-        currentUserSafePath
-      );
-
-      const userMessageObservable = rx.observe(currentUserSafePath);
-      const userSubscription = userMessageObservable.subscribe({
-        next: async (data: ConversationPathData) => {
-          console.log("🚀 RxJS user subscription received data:", data);
-          if (data) {
-            // Process all messages in the data
-            for (const [messageId, messageData] of Object.entries(data)) {
-              if (
-                messageId &&
-                messageId !== "_" &&
-                typeof messageData === "object"
-              ) {
-                await this.processIncomingMessage(
-                  messageData as any,
-                  messageId,
-                  currentUserPair,
-                  currentUserPub
-                );
-              }
-            }
-          }
-        },
-        error: (error: unknown) => {
-          console.error("🚀 RxJS user subscription error:", error);
-        },
-        complete: () => {
-          console.log("🚀 RxJS user subscription completed");
-        },
-      });
-
-      this.subscriptions.push(userSubscription);
-      console.log(
-        "🚀 startListeningWithRx: RxJS subscription created successfully"
-      );
-    } catch (error) {
-      console.error(
-        "🚀 startListeningWithRx: Error setting up RxJS listening:",
-        error
-      );
-      throw error;
-    }
-  }
 
   /**
-   * Fallback traditional listening method
+   * Traditional listening method
    */
   private async startListeningTraditional(
     currentUserEpub: string,
     currentUserPair: UserPair,
     currentUserPub: string
   ): Promise<void> {
-    console.log(
-      "🚀 startListeningTraditional: Using traditional GunDB listening..."
-    );
-
-    // Listen on conversation paths for the current user
-    const currentUserConversationPath = createConversationPath(
-      currentUserPub,
-      "placeholder"
-    );
-    console.log(
-      "🚀 startListeningTraditional: Also listening on conversation path pattern:",
-      currentUserConversationPath.replace("placeholder", "*")
-    );
-
-    // Listen on the recipient's path where messages are actually sent
-    const recipientPath = createSafePath(currentUserPub);
-    console.log(
-      "🚀 startListeningTraditional: Listening on recipient path for incoming messages:",
-      recipientPath
-    );
-
+    const recipientPath = MessagingSchema.privateMessages.currentUser(currentUserPub);
     const recipientMessageNode = this.core.db.gun.get(recipientPath).map();
-    this.conversationListeners.push(
-      recipientMessageNode.on(
-        async (messageData: MessageDataRaw, messageId: string) => {
-          // Add comprehensive null checking before processing
-          if (!messageData || !messageId) {
-            // Rate limit null message logs to reduce console spam
-            const now = Date.now();
-            const shouldLog = now - this.lastTraditionalNullLog > 5000; // Log every 5 seconds max
-
-            if (shouldLog) {
-              console.log(
-                "🚀 startListeningTraditional: Skipping null/undefined message data:",
-                {
-                  messageData: messageData ? "EXISTS" : "NULL",
-                  messageId: messageId ? "EXISTS" : "NULL",
-                  path: recipientPath,
-                }
-              );
-              this.lastTraditionalNullLog = now;
-            }
-            return;
-          }
-
-          // Validate message structure before processing
-          if (!messageData.data || !messageData.from) {
-            // Rate limit invalid structure logs to reduce console spam
-            const now = Date.now();
-            const shouldLog = now - this.lastTraditionalNullLog > 5000; // Log every 5 seconds max
-
-            if (shouldLog) {
-              console.log(
-                "🚀 startListeningTraditional: Skipping invalid message structure:",
-                {
-                  hasData: !!messageData.data,
-                  hasFrom: !!messageData.from,
-                  messageId,
-                  path: recipientPath,
-                }
-              );
-              this.lastTraditionalNullLog = now;
-            }
-            return;
-          }
-
-          console.log(
-            "🚀 startListeningTraditional: Received message from recipient path (real-time):",
-            {
-              messageData,
-              messageId,
-              path: recipientPath,
-            }
-          );
-          await this.processIncomingMessage(
-            messageData,
-            messageId,
-            currentUserPair,
-            currentUserPub
-          );
+    
+    const optimizedHandler = this.createOptimizedMessageHandler(
+      async (messageData: MessageDataRaw, messageId: string) => {
+        if (!messageData || !messageId || !messageData.data || !messageData.from) {
+          return;
         }
-      )
+
+        await this.processIncomingMessage(
+          messageData,
+          messageId,
+          currentUserPair,
+          currentUserPub
+        );
+      }
     );
 
-    console.log(
-      "🚀 startListeningTraditional: Added recipient path and conversation path listeners"
-    );
+    this.conversationListeners.push(recipientMessageNode.on(optimizedHandler));
   }
 
   /**
-   * Process incoming message using traditional method (fallback)
+   * Add a dedicated conversation listener for a specific contact
+   */
+  public addConversationListenerForContact(
+    contactPub: string,
+    callback?: (message: MessageData) => void
+  ): void {
+    if (!this.core.isLoggedIn() || !this.core.db.user || !contactPub || 
+        this.conversationSubscriptions.has(contactPub)) {
+        return;
+      }
+
+      const currentUserPair = (this.core.db.user as any)?._?.sea;
+    if (!currentUserPair) return;
+
+    const currentUserPub = currentUserPair.pub;
+      const recipientPath = MessagingSchema.privateMessages.recipient(contactPub);
+      const node = this.core.db.gun.get(recipientPath).map();
+
+      const handler = node.on(
+        async (messageData: MessageDataRaw, messageId: string) => {
+          try {
+          if (!messageData || !messageId || !messageData.from || 
+              (!messageData.data && !messageData.content)) return;
+
+            const isFromCurrentUser = messageData.from === currentUserPub;
+          const isToCurrentUser = messageData.to === currentUserPub || !messageData.to;
+            if (!isFromCurrentUser && !isToCurrentUser) return;
+
+            if (this.processedMessageIds.has(messageId)) return;
+            this.processedMessageIds.set(messageId, Date.now());
+
+            let finalMessage: MessageData | null = null;
+
+            if (isFromCurrentUser) {
+              finalMessage = {
+                id: messageId,
+              content: (messageData.content as string) || (messageData.data as string) || "",
+                from: messageData.from,
+              timestamp: parseInt(((messageData.timestamp as number) || Date.now()).toString()),
+                signature: messageData.signature as string | undefined,
+              } as MessageData;
+            } else {
+              const decrypted = await this.encryptionManager.decryptMessage(
+                messageData.data as string,
+                currentUserPair,
+                messageData.from
+              );
+
+              if (decrypted.signature) {
+              const dataToVerify = JSON.stringify({
+                    content: decrypted.content,
+                    timestamp: decrypted.timestamp,
+                    id: decrypted.id,
+              }, Object.keys({ content: "", timestamp: 0, id: "" }).sort());
+              
+              const isValid = await this.encryptionManager.verifyMessageSignature(
+                    dataToVerify,
+                    decrypted.signature,
+                    decrypted.from
+                  );
+                if (!isValid) {
+                  this.processedMessageIds.delete(messageId);
+                  return;
+                }
+              }
+
+              if (this.isConversationCleared(decrypted.from, currentUserPub)) {
+                this.processedMessageIds.delete(messageId);
+                return;
+              }
+
+              finalMessage = decrypted;
+            }
+
+            if (finalMessage && callback) {
+              callback(finalMessage);
+            }
+          } catch (e) {
+            this.processedMessageIds.delete(messageId);
+          }
+        }
+      );
+
+      this.conversationSubscriptions.set(contactPub, {
+        off: handler?.off || null,
+      });
+  }
+
+  /**
+   * Remove a dedicated conversation listener for a specific contact
+   */
+  public removeConversationListenerForContact(contactPub: string): void {
+    const subscription = this.conversationSubscriptions.get(contactPub);
+    if (subscription) {
+      if (subscription.off && typeof subscription.off === "function") {
+          subscription.off();
+      }
+      this.conversationSubscriptions.delete(contactPub);
+    }
+  }
+
+  /**
+   * Process incoming message
    */
   private async processIncomingMessage(
     messageData: MessageDataRaw,
@@ -332,174 +275,66 @@ export class MessageProcessor {
     currentUserPair: UserPair,
     currentUserPub: string
   ): Promise<void> {
-    console.log("🚀 processIncomingMessage: Processing message:", {
-      messageData,
-      messageId,
-      currentUserPub,
-    });
+    const isDuplicate = await this.atomicDeduplicator.isDuplicate(messageId);
+    if (isDuplicate) return;
 
-    // Check for duplicates - use a more robust deduplication
-    if (!messageData) {
-      console.log(
-        "🚀 processIncomingMessage: messageData is null, skipping:",
-        messageId
-      );
+    if (!messageData || !messageData.from || messageData._deleted === true) {
+      await this.atomicDeduplicator.removeProcessed(messageId);
       return;
     }
 
-    const deduplicationKey = `${messageId}_${messageData.from}_${Date.now()}`;
-    if (this.processedMessageIds.has(messageId)) {
-      console.log(
-        "🚀 processIncomingMessage: Duplicate message detected, skipping:",
-        messageId
-      );
+    const validation = this.inputValidator.validateMessageData(messageData);
+    if (!validation.isValid || !this.rateLimiter.isAllowed(messageData.from || '')) {
+      await this.atomicDeduplicator.removeProcessed(messageId);
       return;
     }
 
-    // Check for tombstoned messages
-    if (messageData?._deleted === true) {
-      console.log(
-        "🚀 processIncomingMessage: Tombstoned message detected, skipping:",
-        messageId
-      );
-      return;
-    }
-
-    // Validate message structure - be more flexible for different message types
-    if (!messageData?.from) {
-      console.log(
-        "🚀 processIncomingMessage: Message validation failed - missing from field:",
-        {
-          hasFrom: !!messageData?.from,
-          messageDataKeys: messageData ? Object.keys(messageData) : [],
-        }
-      );
-      return;
-    }
-
-    // Check if message has content in either data or content field
-    const hasContent = !!(messageData?.data || messageData?.content);
+    const hasContent = !!(messageData.data || messageData.content);
     if (!hasContent) {
-      console.log(
-        "🚀 processIncomingMessage: Message validation failed - missing content:",
-        {
-          hasData: !!messageData?.data,
-          hasContent: !!messageData?.content,
-          messageDataKeys: messageData ? Object.keys(messageData) : [],
-        }
-      );
+      await this.atomicDeduplicator.removeProcessed(messageId);
       return;
     }
 
-    // Add better message filtering to prevent processing irrelevant messages
     const isFromCurrentUser = messageData.from === currentUserPub;
-    const isToCurrentUser =
-      messageData.to === currentUserPub || !messageData.to; // If no 'to' field, assume it's for current user
+    const isToCurrentUser = messageData.to === currentUserPub || !messageData.to;
 
-    // Skip messages that are neither from nor to the current user
     if (!isFromCurrentUser && !isToCurrentUser) {
-      console.log(
-        "🚀 processIncomingMessage: Message not for current user, skipping:",
-        {
-          messageFrom: messageData.from,
-          messageTo: messageData.to,
-          currentUserPub,
-          isFromCurrentUser,
-          isToCurrentUser,
-        }
-      );
+      await this.atomicDeduplicator.removeProcessed(messageId);
       return;
     }
-
-    // Mark as processed
-    this.processedMessageIds.set(messageId, Date.now());
-    this.cleanupProcessedMessages();
-
-    let decryptedMessage: MessageData;
 
     try {
-      // Handle self-sent messages properly
       if (isFromCurrentUser) {
-        // For self-sent messages, we need to process them to ensure they appear in the UI
-        console.log(
-          "🚀 processIncomingMessage: Processing self-sent message for UI display"
-        );
-
-        // Create a decrypted message object for self-sent messages
         const selfSentMessage: MessageData = {
           id: messageId,
-          content:
-            (messageData.content as string) ||
-            (messageData.data as string) ||
-            "",
+          content: (messageData.content as string) || (messageData.data as string) || "",
           from: messageData.from,
-          timestamp: (messageData.timestamp as number) || Date.now(),
+          timestamp: parseInt(((messageData.timestamp as number) || Date.now()).toString()),
           signature: messageData.signature as string | undefined,
         };
-
-        // Notify listeners with the self-sent message
         this.notifyListeners(selfSentMessage);
         return;
-      } else {
-        // Process messages from other users
-        console.log(
-          "🚀 processIncomingMessage: Processing message from other user..."
-        );
+      }
 
-        // Add null check for messageData before decryption
-        if (!messageData || !messageData.data || !messageData.from) {
-          console.log(
-            "🚀 processIncomingMessage: Invalid messageData, skipping:",
-            {
-              messageId,
-              hasMessageData: !!messageData,
-              hasData: !!messageData?.data,
-              hasFrom: !!messageData?.from,
-            }
-          );
-          this.processedMessageIds.delete(messageId);
+      if (!messageData.data) {
+          await this.atomicDeduplicator.removeProcessed(messageId);
           return;
         }
 
-        decryptedMessage = await this.encryptionManager.decryptMessage(
+      const decryptedMessage = await this.encryptionManager.decryptMessage(
           messageData.data,
           currentUserPair,
           messageData.from
         );
 
-        // Add isEncrypted property to decrypted message
         decryptedMessage.isEncrypted = true;
 
-        // Cache the sender's encryption key for future messages
-        try {
-          const senderEpub = await this.encryptionManager.getRecipientEpub(
-            messageData.from
-          );
-          console.log(
-            `🚀 processIncomingMessage: Cached sender encryption key for: ${messageData.from.slice(0, 8)}...`
-          );
-        } catch (error) {
-          console.warn(
-            `🚀 processIncomingMessage: Failed to cache sender encryption key: ${messageData.from.slice(0, 8)}...`
-          );
-        }
-      }
-
-      console.log(
-        "🚀 processIncomingMessage: Decryption successful:",
-        decryptedMessage
-      );
-
-      // Enforce signature verification for private messages
       if (decryptedMessage.signature) {
-        const dataToVerify = JSON.stringify(
-          {
+        const dataToVerify = JSON.stringify({
             content: decryptedMessage.content,
             timestamp: decryptedMessage.timestamp,
             id: decryptedMessage.id,
-          },
-          Object.keys({ content: "", timestamp: 0, id: "" }).sort()
-        );
+        }, Object.keys({ content: "", timestamp: 0, id: "" }).sort());
 
         const isValid = await this.encryptionManager.verifyMessageSignature(
           dataToVerify,
@@ -508,228 +343,239 @@ export class MessageProcessor {
         );
 
         if (!isValid) {
-          console.log("🚀 processIncomingMessage: Invalid signature, skipping");
-          this.processedMessageIds.delete(messageId);
+          await this.atomicDeduplicator.removeProcessed(messageId);
           return;
         }
       } else {
-        console.log("🚀 processIncomingMessage: Missing signature, skipping");
-        this.processedMessageIds.delete(messageId);
+        await this.atomicDeduplicator.removeProcessed(messageId);
         return;
       }
 
-      // Check if conversation is cleared
       if (this.isConversationCleared(decryptedMessage.from, currentUserPub)) {
-        console.log(
-          "🚀 processIncomingMessage: Conversation cleared, skipping"
-        );
-        this.processedMessageIds.delete(messageId);
+        await this.atomicDeduplicator.removeProcessed(messageId);
         return;
       }
 
-      // Notify listeners
       this.notifyListeners(decryptedMessage);
     } catch (error) {
-      console.error(
-        "🚀 processIncomingMessage: Error during processing:",
-        error
-      );
-
-      // Handle encryption errors gracefully with fallback
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-
-      if (
-        errorMessage.includes("Cannot find encryption public key") ||
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes("Cannot find encryption public key") ||
         errorMessage.includes("Timeout getting profile data") ||
         errorMessage.includes("Timeout getting root data") ||
-        errorMessage.includes("Timeout getting user data")
-      ) {
-        console.warn(
-          `🚀 processIncomingMessage: Encryption timeout/error - will retry later: ${messageData?.from?.slice(0, 8)}... Error: ${errorMessage}`
-        );
-
-        // Create a fallback message for display purposes
+          errorMessage.includes("Timeout getting user data")) {
+        
         const fallbackMessage = {
           id: messageId,
           content: "[Message temporarily unavailable - retrying...]",
           from: messageData?.from || "unknown",
-          timestamp: messageData?.timestamp || Date.now(),
+          timestamp: parseInt((messageData?.timestamp || Date.now()).toString()),
           isEncrypted: true,
           needsRetry: true,
         };
 
-        // Notify listeners with the fallback message
         this.notifyListeners(fallbackMessage);
-
-        // Remove from processed list to allow retry with better network conditions
-        this.processedMessageIds.delete(messageId);
+        await this.atomicDeduplicator.removeProcessed(messageId);
         return;
       }
 
-      // For other errors, remove from processed list to allow retry
-      this.processedMessageIds.delete(messageId);
+      await this.atomicDeduplicator.removeProcessed(messageId);
     }
   }
 
   /**
-   * Enhanced listener notification with error boundaries
+   * Notify listeners with batched processing
    */
   public notifyListeners(decryptedMessage: MessageData): void {
-    console.log("🚀 notifyListeners called with:", {
-      messageId: decryptedMessage.id,
-      content: decryptedMessage.content?.substring(0, 30) + "...",
-      from: decryptedMessage.from,
-      listenersCount: this.messageListeners.length,
-      listenersArray: this.messageListeners.map((_, i) => `Listener ${i}`),
-    });
+    try {
+      this._batchedNotifyQueue.push(decryptedMessage);
+      if (this._batchedNotifyTimer) return;
 
-    if (this.messageListeners.length === 0) {
-      console.log("🚀 No message listeners registered");
-      console.log("🚀 DEBUG: MessageProcessor state:", {
-        hasMessageProcessor: !!this,
-        messageListenersType: typeof this.messageListeners,
-        messageListenersLength: this.messageListeners?.length,
-      });
+      const scheduleNotification = () => {
+        if (typeof requestIdleCallback !== "undefined") {
+          requestIdleCallback(() => this.processNotificationBatch());
+        } else {
+          setTimeout(() => this.processNotificationBatch(), 16);
+        }
+      };
 
-      // DEBUG: Log the call stack to see where this is being called from
-      console.log("🚀 DEBUG: Call stack:", new Error().stack);
+      this._batchedNotifyTimer = setTimeout(scheduleNotification, 16);
+    } catch (error) {
+      console.error("Error in notifyListeners:", error);
+    }
+  }
+
+  /**
+   * Create optimized message handler
+   */
+  private createOptimizedMessageHandler(
+    processor: (messageData: MessageDataRaw, messageId: string) => Promise<void> | void
+  ) {
+    let lastProcessTime = 0;
+    let pendingMessages: Array<{ data: MessageDataRaw; id: string }> = [];
+    let processingTimer: NodeJS.Timeout | null = null;
+    const throttleDelay = 10;
+
+    const processPending = async () => {
+      if (pendingMessages.length === 0) return;
+
+      const messagesToProcess = pendingMessages.splice(0);
+      processingTimer = null;
+
+      const chunkSize = 3;
+      for (let i = 0; i < messagesToProcess.length; i += chunkSize) {
+        const chunk = messagesToProcess.slice(i, i + chunkSize);
+        const startTime = performance.now();
+
+        for (const { data, id } of chunk) {
+          try {
+            await processor(data, id);
+          } catch (error) {
+            console.error("Error processing message:", error);
+          }
+        }
+
+        const elapsed = performance.now() - startTime;
+        if (elapsed > 16) {
+          await new Promise((resolve) => {
+            if (typeof requestIdleCallback !== "undefined") {
+              requestIdleCallback(() => resolve(undefined));
+            } else {
+              setTimeout(() => resolve(undefined), 0);
+            }
+          });
+        }
+      }
+    };
+
+    return (data: MessageDataRaw, id: string) => {
+      const now = Date.now();
+
+      if (now - lastProcessTime < throttleDelay) {
+        pendingMessages.push({ data, id });
+        if (!processingTimer) {
+          processingTimer = setTimeout(processPending, throttleDelay);
+        }
+        return;
+      }
+
+      lastProcessTime = now;
+      pendingMessages.push({ data, id });
+
+      if (!processingTimer) {
+        processingTimer = setTimeout(processPending, 0);
+      }
+    };
+  }
+
+  /**
+   * Process notification batch
+   */
+  private processNotificationBatch(): void {
+    const messages = this._batchedNotifyQueue.splice(0);
+    this._batchedNotifyTimer = null;
+    const listenersToNotify = [...this.messageListeners];
+
+    if (listenersToNotify.length === 0 || messages.length === 0) {
       return;
     }
 
-    console.log(`🚀 Notifying ${this.messageListeners.length} listeners`);
+    const processChunk = (startIndex: number) => {
+      const chunkSize = 3;
+      const endIndex = Math.min(startIndex + chunkSize, messages.length);
 
-    this.messageListeners.forEach((callback, index) => {
-      try {
-        console.log(
-          `🚀 Calling listener ${index} with message:`,
-          decryptedMessage.id
-        );
-        callback(decryptedMessage);
-        console.log(`🚀 Listener ${index} called successfully`);
-      } catch (error) {
-        console.error(`🚀 Error in message listener ${index}:`, error);
-        // Don't let one bad listener break others
+      for (let i = startIndex; i < endIndex; i++) {
+        const msg = messages[i];
+        listenersToNotify.forEach((listener) => {
+          try {
+            listener(msg);
+          } catch (error) {
+            console.error("Error in listener:", error);
+          }
+        });
       }
-    });
+
+      if (endIndex < messages.length) {
+        if (typeof requestIdleCallback !== "undefined") {
+          requestIdleCallback(() => processChunk(endIndex));
+        } else {
+          setTimeout(() => processChunk(endIndex), 0);
+        }
+      }
+    };
+
+    processChunk(0);
   }
 
   /**
-   * Enhanced group listener notification
+   * Notify group listeners
    */
   private notifyGroupListeners(decryptedMessage: MessageData): void {
     if (this.groupMessageListenersInternal.length === 0) {
-      console.log("🚀 No group message listeners registered");
       return;
     }
 
-    console.log(
-      `🚀 Notifying ${this.groupMessageListenersInternal.length} group listeners`
-    );
-
-    this.groupMessageListenersInternal.forEach((callback, index) => {
+    this.groupMessageListenersInternal.forEach((callback) => {
       try {
         callback(decryptedMessage as any);
       } catch (error) {
-        console.error(`🚀 Error in group message listener ${index}:`, error);
+        console.error("Error in group message listener:", error);
       }
     });
   }
 
   /**
-   * Enhanced cleanup for processed messages
+   * Cleanup processed messages
    */
   private cleanupProcessedMessages(): void {
-    cleanupExpiredEntries(this.processedMessageIds, this.MESSAGE_TTL);
-    limitMapSize(this.processedMessageIds, this.MAX_PROCESSED_MESSAGES);
+    // Cleanup is handled by AtomicMessageDeduplicator
+      // LRU cache automatically evicts least recently used items
   }
 
   /**
-   * Register message listener with validation
+   * Register message listener
    */
   public onMessage(callback: MessageListener): void {
     if (typeof callback !== "function") {
-      console.warn("🚀 Invalid message callback provided");
       return;
     }
 
     this.messageListeners.push(callback);
-    console.log(
-      `🚀 Message listener registered. Total: ${this.messageListeners.length}`
-    );
-
-    // DEBUG: Log all listeners for debugging
-    console.log(
-      "🚀 onMessage: All registered listeners:",
-      this.messageListeners.map((_, index) => `Listener ${index}`)
-    );
-
-    // DEBUG: Log the callback function details
-    console.log("🚀 onMessage: Callback details:", {
-      callbackType: typeof callback,
-      callbackName: callback.name || "anonymous",
-      callbackLength: callback.length,
-    });
-
-    // DEBUG: Log the MessageProcessor instance
-    console.log("🚀 onMessage: MessageProcessor instance:", {
-      instanceId: (this.core?.db?.user?.is?.pub as string) || "unknown",
-      listenersArray: this.messageListeners,
-      listenersLength: this.messageListeners.length,
-    });
   }
 
   /**
-   * Enhanced stop listening with RxJS cleanup
+   * Stop listening
    */
   public stopListening(): void {
     if (!this._isListening) return;
 
-    console.log("🚀 Stopping all listeners...");
-
-    // Unsubscribe from all private message subscriptions
-    this.subscriptions.forEach((subscription, index) => {
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
-        console.log(
-          `🚀 Unsubscribed from private message subscription ${index}`
-        );
-      }
-    });
-    this.subscriptions = [];
 
     // Unsubscribe from all group subscriptions
-    this.groupSubscriptions.forEach((subscription, groupId) => {
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
-        console.log(`🚀 Unsubscribed from group subscription: ${groupId}`);
-      } else if (
-        subscription &&
-        subscription.off &&
-        typeof subscription.off === "function"
-      ) {
+    this.groupSubscriptions.forEach((subscription) => {
+      if (subscription && subscription.off && typeof subscription.off === "function") {
         subscription.off();
-        console.log(
-          `🚀 Unsubscribed from traditional group listener: ${groupId}`
-        );
       }
     });
     this.groupSubscriptions.clear();
 
     // Unsubscribe from all conversation subscriptions
-    this.conversationSubscriptions.forEach((subscription, contactPub) => {
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
-        console.log(
-          `🚀 Unsubscribed from conversation subscription: ${contactPub}`
-        );
+    this.conversationSubscriptions.forEach((subscription) => {
+      if (subscription && subscription.off && typeof subscription.off === "function") {
+        subscription.off();
       }
     });
     this.conversationSubscriptions.clear();
 
+    // Stop listening to public rooms
+    this.publicRoomManager.stopListeningPublic();
+
+    // Stop listening to token rooms
+    this.tokenRoomManager.stopListeningTokenRooms();
+
     this._isListening = false;
     this.processedMessageIds.clear();
-    console.log("🚀 All listeners stopped successfully");
+    this.lruCache.clear();
+    this.messageObjectPool = new MessageObjectPool(100);
   }
 
   /**
@@ -768,6 +614,20 @@ export class MessageProcessor {
   }
 
   /**
+   * Gets the number of public room message listeners
+   */
+  public getPublicRoomMessageListenersCount(): number {
+    return this.publicRoomManager.getPublicMessageListenersCount();
+  }
+
+  /**
+   * Gets the number of token room message listeners
+   */
+  public getTokenRoomMessageListenersCount(): number {
+    return this.tokenRoomManager.getTokenRoomMessageListenersCount();
+  }
+
+  /**
    * Checks if group listening is active
    */
   public isListeningGroups(): boolean {
@@ -781,86 +641,75 @@ export class MessageProcessor {
     return this.groupSubscriptions.has(groupId);
   }
 
-  // **ADDED BACK: Group management functions**
-  
   /**
-   * Register group message listener with validation
+   * Checks if public room listening is active
+   */
+  public isListeningPublicRooms(): boolean {
+    return this.publicRoomManager.isListeningPublic();
+  }
+
+  /**
+   * Checks if token room listening is active
+   */
+  public isListeningTokenRooms(): boolean {
+    return this.tokenRoomManager.isListeningTokenRooms();
+  }
+
+  /**
+   * Checks if a specific public room has an active listener
+   */
+  public hasPublicRoomListener(roomId: string): boolean {
+    return this.publicRoomManager.hasActiveRoomListener(roomId);
+  }
+
+  /**
+   * Checks if a specific token room has an active listener
+   */
+  public hasTokenRoomListener(roomId: string): boolean {
+    return this.tokenRoomManager.isListeningToRoom(roomId);
+  }
+
+  // **ADDED BACK: Group management functions**
+
+  /**
+   * Register group message listener
    */
   public onGroupMessage(callback: GroupMessageListener): void {
     if (typeof callback !== "function") {
-      console.warn("🚀 Invalid group message callback provided");
       return;
     }
 
     this.groupMessageListenersInternal.push(callback);
-    console.log(
-      `🚀 Group message listener registered. Total: ${this.groupMessageListenersInternal.length}`
-    );
   }
 
   /**
-   * Enhanced group listener with RxJS fallback to traditional
+   * Register public room message listener
+   */
+  public onPublicRoomMessage(callback: any): void {
+    this.publicRoomManager.onPublicMessage(callback);
+  }
+
+  /**
+   * Register token room message listener
+   */
+  public onTokenRoomMessage(callback: any): void {
+    this.tokenRoomManager.onTokenRoomMessage(callback);
+  }
+
+  /**
+   * Add group listener
    */
   public addGroupListener(groupId: string): void {
     if (!groupId || this.groupSubscriptions.has(groupId)) {
-      console.log(
-        "🚀 Group listener already exists or invalid groupId:",
-        groupId
-      );
       return;
     }
 
     const currentUserPair = (this.core.db.user as any)?._?.sea;
     if (!currentUserPair) {
-      console.warn("🚀 No user pair available for group listener");
       return;
     }
 
-    // Check if RxJS is available and not disabled
-    const disableRxJS = process.env.DISABLE_RXJS === "true" || true; // Force disable RxJS since it's not available
-
-    if (
-      disableRxJS ||
-      !(this.core.db as any).rx ||
-      typeof (this.core.db as any).rx !== "function"
-    ) {
-      console.log("🚀 Adding traditional group listener for:", groupId);
       this.addGroupListenerTraditional(groupId, currentUserPair);
-      return;
-    }
-
-    console.log("🚀 Adding RxJS group listener for:", groupId);
-
-    try {
-      const groupMessageObservable = this.createGroupMessageObservable(
-        groupId,
-        currentUserPair
-      );
-
-      const subscription = groupMessageObservable.subscribe({
-        next: (message) => {
-          if (message) {
-            this.notifyGroupListeners(message);
-          }
-        },
-        error: (error) => {
-          console.error("🚀 Group message subscription error:", error);
-          this.groupSubscriptions.delete(groupId);
-        },
-      });
-
-      this.groupSubscriptions.set(groupId, subscription);
-      console.log(
-        "🚀 Group listener added successfully. Total:",
-        this.groupSubscriptions.size
-      );
-    } catch (error) {
-      console.error(
-        "🚀 RxJS group listener failed, falling back to traditional:",
-        error
-      );
-      this.addGroupListenerTraditional(groupId, currentUserPair);
-    }
   }
 
   /**
@@ -871,33 +720,20 @@ export class MessageProcessor {
     currentUserPair: UserPair
   ): void {
     try {
-      const groupMessagePath = `group-messages/${groupId}`;
-      console.log(
-        "🚀 Setting up traditional group listener for path:",
-        groupMessagePath
-      );
-
+      const groupMessagePath = MessagingSchema.groups.messages(groupId);
       const groupNode = this.core.db.gun.get(groupMessagePath);
 
-      // Store traditional listener
       const listener = {
         groupId,
         node: groupNode,
         off: null as any,
       };
 
-      // Listen for new group messages
       const messageListener = groupNode
         .map()
         .on(async (messageData: any, messageId: string) => {
           if (messageData && messageId && messageId !== "_") {
-            console.log("🚀 Traditional group message received:", {
-              messageId,
-              groupId,
-            });
-
             try {
-              // Process the group message using traditional approach
               await this.processIncomingGroupMessageTraditional(
                 messageData,
                 messageId,
@@ -905,25 +741,15 @@ export class MessageProcessor {
                 groupId
               );
             } catch (error) {
-              console.error(
-                "🚀 Error processing traditional group message:",
-                error
-              );
+              console.error("Error processing group message:", error);
             }
           }
         });
 
       listener.off = messageListener.off;
-
-      // Store the listener for cleanup
       this.groupSubscriptions.set(groupId, listener);
-
-      console.log(
-        "🚀 Traditional group listener added successfully for:",
-        groupId
-      );
     } catch (error) {
-      console.error("🚀 Error adding traditional group listener:", error);
+      console.error("Error adding group listener:", error);
     }
   }
 
@@ -937,32 +763,25 @@ export class MessageProcessor {
     groupId: string
   ): Promise<void> {
     try {
-      // Parse message data if it's a string
       let parsedData: any;
       if (typeof messageData === "string") {
         try {
           parsedData = JSON.parse(messageData);
         } catch (error) {
-          console.error("🚀 Invalid JSON in group message:", error);
           return;
         }
       } else {
         parsedData = messageData;
       }
 
-      // Check if we've already processed this message
       if (this.processedMessageIds.has(messageId)) {
-        console.log("🚀 Skipping duplicate group message:", messageId);
         return;
       }
 
-      // Mark as processed
       this.processedMessageIds.set(messageId, Date.now());
 
-      // Get group data and key
       const groupData = await this.groupManager.getGroupData(groupId);
       if (!groupData) {
-        console.warn("🚀 Group data not found for:", groupId);
         return;
       }
 
@@ -972,166 +791,83 @@ export class MessageProcessor {
         currentUserPair
       );
       if (!groupKey) {
-        console.warn(
-          "🚀 Group key not available for user:",
-          currentUserPair.pub
-        );
         return;
       }
 
-      // Decrypt the message content
       const decryptedContent = await this.core.db.sea.decrypt(
         parsedData.content,
         groupKey
       );
 
       if (!decryptedContent) {
-        console.warn("🚀 Failed to decrypt group message:", messageId);
         return;
       }
 
-      // Verify message signature
-      const isValidSignature =
-        await this.encryptionManager.verifyMessageSignature(
+      const isValidSignature = await this.encryptionManager.verifyMessageSignature(
           decryptedContent,
           parsedData.signature,
           parsedData.from
         );
 
       if (!isValidSignature) {
-        console.warn("🚀 Invalid signature for group message:", messageId);
         return;
       }
 
-      // Create final message data
       const finalMessage: MessageData = {
         id: messageId,
         from: parsedData.from,
         content: decryptedContent,
-        timestamp: parsedData.timestamp || Date.now(),
+        timestamp: parseInt((parsedData.timestamp || Date.now()).toString()),
         signature: parsedData.signature,
         groupId: groupId,
       };
 
-      // Notify listeners
       this.notifyGroupListeners(finalMessage);
     } catch (error) {
-      console.error("🚀 Error processing traditional group message:", error);
+      console.error("Error processing group message:", error);
     }
   }
 
-  /**
-   * Create RxJS observable for group messages
-   */
-  private createGroupMessageObservable(
-    groupId: string,
-    currentUserPair: UserPair
-  ): Observable<MessageData | null> {
-    const groupMessagePath = `group-messages/${groupId}`;
-
-    return (this.core.db as any)
-      .rx()
-      .observe(groupMessagePath)
-      .pipe(
-        filter((data: any) => data !== null && data !== undefined),
-        distinctUntilChanged((prev: any, curr: any) => prev?.id === curr?.id),
-        debounceTime(this.DEBOUNCE_TIME),
-        mergeMap((messageData: any) =>
-          this.processGroupMessageWithRxJS(messageData, currentUserPair)
-        ),
-        retry(this.RETRY_ATTEMPTS),
-        catchError((error) => {
-          console.error("🚀 Group message processing error:", error);
-          return of(null);
-        })
-      );
-  }
 
   /**
-   * Process group message using RxJS
-   */
-  private processGroupMessageWithRxJS(
-    messageData: MessageDataRaw,
-    currentUserPair: UserPair
-  ): Observable<MessageData | null> {
-    const messageId =
-      messageData.id || `${messageData.from}_${messageData.timestamp}`;
-
-    if (this.processedMessageIds.has(messageId)) {
-      return of(null);
-    }
-
-    this.processedMessageIds.set(messageId, Date.now());
-
-    return from(
-      this.groupManager.getGroupData(messageData.groupId as string)
-    ).pipe(
-      switchMap((groupData) => {
-        if (!groupData) {
-          this.processedMessageIds.delete(messageId);
-          return of(null);
-        }
-
-        return from(
-          this.groupManager.getGroupKeyForUser(
-            groupData,
-            currentUserPair.pub,
-            currentUserPair
-          )
-        ).pipe(
-          switchMap((groupKey) => {
-            if (!groupKey) {
-              this.processedMessageIds.delete(messageId);
-              return of(null);
-            }
-
-            return from(
-              this.core.db.sea.decrypt(messageData.content as string, groupKey)
-            ).pipe(
-              map((decryptedContent) => {
-                const finalContent =
-                  typeof decryptedContent === "object" &&
-                  decryptedContent !== null &&
-                  "content" in decryptedContent
-                    ? (decryptedContent as any).content
-                    : String(decryptedContent);
-
-                return {
-                  id: messageId,
-                  from: messageData.from,
-                  content: finalContent,
-                  timestamp: messageData.timestamp,
-                  groupId: messageData.groupId,
-                  signature: messageData.signature,
-                } as MessageData;
-              }),
-              catchError((error) => {
-                console.error("🚀 Group message decryption error:", error);
-                this.processedMessageIds.delete(messageId);
-                return of(null);
-              })
-            );
-          })
-        );
-      })
-    );
-  }
-
-  /**
-   * Remove group listener with proper cleanup
+   * Remove group listener
    */
   public removeGroupListener(groupId: string): void {
     const subscription = this.groupSubscriptions.get(groupId);
     if (subscription) {
-      // Handle both RxJS subscriptions and traditional listeners
-      if (typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
-      } else if (subscription.off && typeof subscription.off === "function") {
+      if (subscription.off && typeof subscription.off === "function") {
         subscription.off();
       }
       this.groupSubscriptions.delete(groupId);
-      console.log("🚀 Group listener removed:", groupId);
     }
+  }
+
+  /**
+   * Add public room listener
+   */
+  public addPublicRoomListener(roomId: string): void {
+    this.publicRoomManager.startListeningPublic(roomId);
+  }
+
+  /**
+   * Remove public room listener
+   */
+  public removePublicRoomListener(roomId: string): void {
+    this.publicRoomManager.stopListeningToRoom(roomId);
+  }
+
+  /**
+   * Add token room listener
+   */
+  public addTokenRoomListener(roomId: string, token: string): void {
+    this.tokenRoomManager.startListeningToRoom(roomId, token);
+  }
+
+  /**
+   * Remove token room listener
+   */
+  public removeTokenRoomListener(roomId: string): void {
+    this.tokenRoomManager.leaveTokenRoom(roomId);
   }
 
   /**
@@ -1156,20 +892,14 @@ export class MessageProcessor {
   private loadClearedConversations(): void {
     try {
       if (typeof window !== "undefined" && window.localStorage) {
-        const stored = window.localStorage.getItem(
-          this.CLEARED_CONVERSATIONS_KEY
-        );
+        const stored = window.localStorage.getItem(this.CLEARED_CONVERSATIONS_KEY);
         if (stored) {
           const conversationIds = JSON.parse(stored);
           this.clearedConversations = new Set(conversationIds);
-          console.log(
-            "🔍 MessageProcessor: Loaded cleared conversations from localStorage:",
-            this.clearedConversations.size
-          );
         }
       }
     } catch (error) {
-      console.error("❌ Error loading cleared conversations:", error);
+      console.error("Error loading cleared conversations:", error);
     }
   }
 
@@ -1184,13 +914,9 @@ export class MessageProcessor {
           this.CLEARED_CONVERSATIONS_KEY,
           JSON.stringify(conversationIds)
         );
-        console.log(
-          "🔍 MessageProcessor: Saved cleared conversations to localStorage:",
-          conversationIds.length
-        );
       }
     } catch (error) {
-      console.error("❌ Error saving cleared conversations:", error);
+      console.error("Error saving cleared conversations:", error);
     }
   }
 
@@ -1201,10 +927,6 @@ export class MessageProcessor {
     const conversationId = this.createConversationId(from, to);
     this.clearedConversations.add(conversationId);
     this.saveClearedConversations();
-    console.log(
-      "🔍 MessageProcessor: Added conversation to cleared set:",
-      conversationId
-    );
   }
 
   /**
@@ -1228,10 +950,6 @@ export class MessageProcessor {
     const conversationId = this.createConversationId(from, to);
     this.clearedConversations.delete(conversationId);
     this.saveClearedConversations();
-    console.log(
-      "🔍 MessageProcessor: Removed conversation from cleared set:",
-      conversationId
-    );
   }
 
   /**
@@ -1240,7 +958,6 @@ export class MessageProcessor {
   public resetClearedConversations(): void {
     this.clearedConversations.clear();
     this.saveClearedConversations();
-    console.log("🔍 MessageProcessor: Reset all cleared conversations");
   }
 
   /**
@@ -1248,34 +965,20 @@ export class MessageProcessor {
    */
   public resetClearedConversation(contactPub: string): void {
     if (!this.core.isLoggedIn() || !this.core.db.user) {
-      console.warn("🔍 MessageProcessor: User not logged in for reset");
       return;
     }
 
     const currentUserPair = (this.core.db.user as any)._?.sea;
     if (!currentUserPair) {
-      console.warn("🔍 MessageProcessor: No user pair available for reset");
       return;
     }
 
     const currentUserPub = currentUserPair.pub;
-    const conversationId = this.createConversationId(
-      currentUserPub,
-      contactPub
-    );
+    const conversationId = this.createConversationId(currentUserPub, contactPub);
 
     if (this.clearedConversations.has(conversationId)) {
       this.clearedConversations.delete(conversationId);
       this.saveClearedConversations();
-      console.log(
-        "🔍 MessageProcessor: Reset cleared conversation for:",
-        contactPub
-      );
-    } else {
-      console.log(
-        "🔍 MessageProcessor: Conversation was not cleared:",
-        contactPub
-      );
     }
   }
 
@@ -1283,90 +986,40 @@ export class MessageProcessor {
    * Public method to reload messages for a specific contact
    */
   public async reloadMessages(contactPub: string): Promise<any[]> {
-    console.log(
-      "🔄 MessageProcessor: Reloading messages for contact:",
-      contactPub
-    );
-
-    // Reset the cleared state for this conversation
     this.resetClearedConversation(contactPub);
-
-    // Load existing messages
-    const messages = await this.loadExistingMessages(contactPub);
-
-    console.log(
-      "🔄 MessageProcessor: Reloaded messages count:",
-      messages.length
-    );
-    return messages;
+    return await this.loadExistingMessages(contactPub);
   }
 
   /**
    * Load existing messages from localStorage only
-   * GunDB serves only as real-time bridge - no fetching old messages
    */
   public async loadExistingMessages(contactPub: string): Promise<any[]> {
     try {
-      console.log(
-        "📱 MessageProcessor: Loading existing messages for contact:",
-        contactPub
-      );
-
       if (!this.core.isLoggedIn() || !this.core.db.user) {
-        console.warn("📱 MessageProcessor: User not logged in");
         return [];
       }
 
       const currentUserPair = (this.core.db.user as any)._?.sea;
       if (!currentUserPair) {
-        console.warn("📱 MessageProcessor: No user pair available");
         return [];
       }
 
       const currentUserPub = currentUserPair.pub;
-
-      // Always load from localStorage only
-      console.log(
-        "📱 MessageProcessor: Signal approach - loading from localStorage only"
-      );
-
-      // Load messages from localStorage for this conversation
-      const conversationId = this.createConversationId(
-        currentUserPub,
-        contactPub
-      );
+      const conversationId = this.createConversationId(currentUserPub, contactPub);
       const localStorageKey = `shogun_messages_${conversationId}`;
 
-      try {
         if (typeof window === "undefined" || !window.localStorage) {
           return [];
         }
+
         const storedMessages = window.localStorage.getItem(localStorageKey);
         if (storedMessages) {
-          const messages = JSON.parse(storedMessages);
-          console.log(
-            "📱 MessageProcessor: Loaded messages from localStorage:",
-            messages.length
-          );
-          return messages;
-        }
-      } catch (error) {
-        console.warn(
-          "📱 MessageProcessor: Error loading from localStorage:",
-          error
-        );
+        return JSON.parse(storedMessages);
       }
 
-      // Return empty array - no GunDB fetching
-      console.log(
-        "📱 MessageProcessor: No messages in localStorage, returning empty array"
-      );
       return [];
     } catch (error) {
-      console.error(
-        "❌ MessageProcessor: Error loading existing messages:",
-        error
-      );
+      console.error("Error loading existing messages:", error);
       return [];
     }
   }
@@ -1418,14 +1071,14 @@ export class MessageProcessor {
       console.log("🔍 Debug paths:", {
         currentUserPub,
         recipientPub,
-        recipientSafePath: createSafePath(recipientPub),
-        currentUserSafePath: createSafePath(currentUserPub),
+        recipientSafePath: MessagingSchema.privateMessages.recipient(recipientPub),
+        currentUserSafePath: MessagingSchema.privateMessages.currentUser(currentUserPub),
       });
 
       // Use a more robust clearing approach
       try {
         // Clear messages sent TO the recipient (stored under recipient's path)
-        const recipientSafePath = createSafePath(recipientPub);
+        const recipientSafePath = MessagingSchema.privateMessages.recipient(recipientPub);
         const recipientClearedCount = await this.clearMessagesFromPath(
           recipientSafePath,
           currentUserPub,
@@ -1439,7 +1092,7 @@ export class MessageProcessor {
 
       try {
         // Clear messages received FROM the recipient (stored under current user's path)
-        const currentUserSafePath = createSafePath(currentUserPub);
+        const currentUserSafePath = MessagingSchema.privateMessages.currentUser(currentUserPub);
         const currentUserClearedCount = await this.clearMessagesFromPath(
           currentUserSafePath,
           recipientPub,
@@ -1488,9 +1141,7 @@ export class MessageProcessor {
       console.error("❌ Error in clearConversation:", error);
       return {
         success: false,
-        error:
-          error.message ||
-          "Unknown error while clearing the conversation",
+        error: error.message || "Unknown error while clearing the conversation",
       };
     }
   }
@@ -1523,9 +1174,7 @@ export class MessageProcessor {
             clearTimeout(operationTimeoutId);
             if (hasError) {
               console.error(`❌ Error clearing messages from ${pathType} path`);
-              reject(
-                new Error(`Error while clearing ${pathType} messages`)
-              );
+              reject(new Error(`Error while clearing ${pathType} messages`));
             } else {
               console.log(
                 `✅ Cleared ${clearedCount} messages from ${pathType} path`
@@ -1722,7 +1371,7 @@ export class MessageProcessor {
 
       // Set messages sent TO the recipient to null (stored under recipient's path)
       try {
-        const recipientSafePath = createSafePath(recipientPub);
+        const recipientSafePath = MessagingSchema.privateMessages.recipient(recipientPub);
         const recipientNullifiedCount = await this.setMessagesToNullFromPath(
           recipientSafePath,
           currentUserPub,
@@ -1736,7 +1385,7 @@ export class MessageProcessor {
 
       // Set messages received FROM the recipient to null (stored under current user's path)
       try {
-        const currentUserSafePath = createSafePath(currentUserPub);
+        const currentUserSafePath = MessagingSchema.privateMessages.currentUser(currentUserPub);
         const currentUserNullifiedCount = await this.setMessagesToNullFromPath(
           currentUserSafePath,
           recipientPub,
@@ -1763,9 +1412,7 @@ export class MessageProcessor {
       console.error("❌ Error in setMessagesToNull:", error);
       return {
         success: false,
-        error:
-          error.message ||
-          "Unknown error while nullifying messages",
+        error: error.message || "Unknown error while nullifying messages",
       };
     }
   }
@@ -1798,11 +1445,7 @@ export class MessageProcessor {
               console.error(
                 `❌ Error nullifying messages from ${pathType} path`
               );
-              reject(
-                new Error(
-                  `Error while nullifying ${pathType} messages`
-                )
-              );
+              reject(new Error(`Error while nullifying ${pathType} messages`));
             } else {
               console.log(
                 `✅ Set ${nullifiedCount} messages to null from ${pathType} path`
@@ -2090,8 +1733,8 @@ export class MessageProcessor {
       }
 
       const currentUserPub = currentUserPair.pub;
-      const recipientSafePath = createSafePath(recipientPub);
-      const currentUserSafePath = createSafePath(currentUserPub);
+      const recipientSafePath = MessagingSchema.privateMessages.recipient(recipientPub);
+      const currentUserSafePath = MessagingSchema.privateMessages.currentUser(currentUserPub);
 
       console.log("🔍 Debugging GunDB structure for conversation:", {
         currentUserPub,
@@ -2192,14 +1835,17 @@ export class MessageProcessor {
 
       // Try many different possible paths
       const debugPaths = [
-        createConversationPath(currentUserPair.pub, contactPub), // Conversation path (new) - check first
-        createSafePath(contactPub),
-        createSafePath(currentUserPair.pub), // Current user's path (for sent messages)
+        MessagingSchema.privateMessages.conversation(currentUserPair.pub, contactPub), // Conversation path (new) - check first
+        MessagingSchema.privateMessages.recipient(contactPub),
+        MessagingSchema.privateMessages.currentUser(currentUserPair.pub), // Current user's path (for sent messages)
         `msg_${contactPub}`,
         `messages_${contactPub}`,
         `chat_${contactPub}`,
         // **IMPROVED: Use schema for conversation path**
-        MessagingSchema.privateMessages.conversation(currentUserPair.pub, contactPub),
+        MessagingSchema.privateMessages.conversation(
+          currentUserPair.pub,
+          contactPub
+        ),
         `private_${contactPub}`,
         `direct_${contactPub}`,
         contactPub, // Direct pub key
@@ -2243,32 +1889,45 @@ export class MessageProcessor {
     currentUserPair: UserPair,
     currentUserPub: string
   ): void {
+    // **OPTIMIZED: Check if listener already exists to prevent duplicates**
+    if (
+      this.conversationListeners.some(
+        (listener) => listener.path === conversationPath
+      )
+    ) {
+      console.log(
+        "🚀 registerConversationPathListener: Listener already exists for path:",
+        conversationPath
+      );
+      return;
+    }
+
     console.log(
       "🚀 registerConversationPathListener: Registering listener for path:",
       conversationPath
     );
 
     const conversationNode = this.core.db.gun.get(conversationPath).map();
-    this.conversationListeners.push(
-      conversationNode.on(
-        async (messageData: MessageDataRaw, messageId: string) => {
-          console.log(
-            "🚀 registerConversationPathListener: Received message from conversation path (real-time):",
-            {
-              messageData,
-              messageId,
-              path: conversationPath,
-            }
-          );
-          await this.processIncomingMessage(
-            messageData,
-            messageId,
-            currentUserPair,
-            currentUserPub
-          );
+    const listener = conversationNode.on(
+      async (messageData: MessageDataRaw, messageId: string) => {
+        // **OPTIMIZED: Early duplicate check to prevent processing loops**
+        if (this.processedMessageIds.has(messageId)) {
+          return; // Skip immediately if already processed
         }
-      )
+
+        // **OPTIMIZED: Reduced logging to prevent console spam**
+        await this.processIncomingMessage(
+          messageData,
+          messageId,
+          currentUserPair,
+          currentUserPub
+        );
+      }
     );
+
+    // **FIXED: Store listener with path info for deduplication**
+    (listener as any).path = conversationPath;
+    this.conversationListeners.push(listener);
 
     console.log(
       "🚀 registerConversationPathListener: Successfully registered listener for:",
@@ -2289,20 +1948,26 @@ export class MessageProcessor {
     );
 
     // Clear group listeners
-    this.groupSubscriptions.forEach((subscription, groupId) => {
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
+    this.groupSubscriptions.forEach((subscription) => {
+      if (subscription && subscription.off && typeof subscription.off === "function") {
+        subscription.off();
       }
     });
     this.groupSubscriptions.clear();
 
     // Clear conversation listeners
-    this.conversationSubscriptions.forEach((subscription, contactPub) => {
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
+    this.conversationSubscriptions.forEach((subscription) => {
+      if (subscription && subscription.off && typeof subscription.off === "function") {
+        subscription.off();
       }
     });
     this.conversationSubscriptions.clear();
+
+    // Stop listening to public rooms
+    this.publicRoomManager.stopListeningPublic();
+
+    // Stop listening to token rooms
+    this.tokenRoomManager.stopListeningTokenRooms();
 
     // Reset state
     this._isListening = false;

@@ -19,14 +19,18 @@ export const MessagingSchema = {
   // Private message paths
   privateMessages: {
     // Path for messages sent to a specific recipient
-    recipient: (recipientPub: string) => `msg_${recipientPub}`,
+    recipient: (recipientPub: string) => {
+      const safe = recipientPub.replace(/[^a-zA-Z0-9_-]/g, "_");
+      return `msg_${safe}`;
+    },
     
     // Path for messages received by the current user
     currentUser: (currentUserPub: string) => `msg_${currentUserPub}`,
     
     // Bidirectional conversation path
     conversation: (user1Pub: string, user2Pub: string) => {
-      const sorted = [user1Pub, user2Pub].sort();
+      const sanitize = (k: string) => k.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const sorted = [sanitize(user1Pub), sanitize(user2Pub)].sort();
       return `conversation_${sorted[0]}_${sorted[1]}`;
     },
     
@@ -151,7 +155,8 @@ export const MessagingSchema = {
     
     // Create a consistent conversation ID
     createConversationId: (user1Pub: string, user2Pub: string) => {
-      const sorted = [user1Pub, user2Pub].sort();
+      const sanitize = (k: string) => k.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const sorted = [sanitize(user1Pub), sanitize(user2Pub)].sort();
       return `conversation_${sorted[0]}_${sorted[1]}`;
     }
   },
@@ -178,7 +183,7 @@ export function createSafePath(pubKey: string, prefix: string = "msg"): string {
   }
   
   // Remove dangerous characters and normalize
-  const safeKey = pubKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const safeKey = pubKey.replace(/[^a-zA-Z0-9_-]/g, "_");
   return `${prefix}_${safeKey}`;
 }
 

@@ -28,6 +28,14 @@ export class PublicRoomManager {
     string,
     { handler: any; processedMessageIds: Set<string> }
   > = new Map();
+  
+  // **NEW: Performance metrics tracking**
+  private performanceMetrics = {
+    messagesSent: 0,
+    averageResponseTime: 0,
+    totalResponseTime: 0,
+    responseCount: 0,
+  };
 
   constructor(core: ShogunCore, encryptionManager: EncryptionManager) {
     this.core = core;
@@ -536,6 +544,8 @@ export class PublicRoomManager {
     roomId: string,
     messageContent: string
   ): Promise<MessageResponse> {
+    const startTime = performance.now();
+    
     if (!this.core.isLoggedIn() || !this.core.db.user) {
       return {
         success: false,
@@ -641,6 +651,9 @@ export class PublicRoomManager {
       });
 
       // **FIXED: Return success immediately - GunDB is fire-and-forget**
+      // **NEW: Update performance metrics**
+      this.performanceMetrics.messagesSent++;
+      
       return { success: true, messageId };
     } catch (error: any) {
       return {
@@ -649,6 +662,14 @@ export class PublicRoomManager {
           error.message ||
           "Unknown error while sending public message",
       };
+    } finally {
+      // **NEW: Track response time**
+      const responseTime = performance.now() - startTime;
+      this.performanceMetrics.totalResponseTime += responseTime;
+      this.performanceMetrics.responseCount++;
+      this.performanceMetrics.averageResponseTime =
+        this.performanceMetrics.totalResponseTime /
+        this.performanceMetrics.responseCount;
     }
   }
 
@@ -794,7 +815,7 @@ export class PublicRoomManager {
     } else if (type === "group") {
       safePath = path;
     } else {
-      safePath = createSafePath(path);
+      safePath = MessagingSchema.privateMessages.recipient(path);
     }
 
     const messageNode = this.core.db.gun.get(safePath);
@@ -853,6 +874,13 @@ export class PublicRoomManager {
    */
   public getProcessedPublicMessagesCount(): number {
     return 0; // No longer tracking processed messages
+  }
+
+  /**
+   * **NEW: Get performance metrics**
+   */
+  public getPerformanceMetrics(): any {
+    return { ...this.performanceMetrics };
   }
 
   /**
