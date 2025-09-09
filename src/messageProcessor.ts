@@ -476,7 +476,17 @@ export class MessageProcessor {
     this._batchedNotifyTimer = null;
     const listenersToNotify = [...this.messageListeners];
 
+    console.log("🔍 MessageProcessor.processNotificationBatch: Processing batch", {
+      messageCount: messages.length,
+      listenerCount: listenersToNotify.length,
+      messages: messages.map(m => ({ id: m.id, from: m.from?.slice(0, 8) + "...", content: m.content?.substring(0, 20) + "..." }))
+    });
+
     if (listenersToNotify.length === 0 || messages.length === 0) {
+      console.warn("⚠️ MessageProcessor.processNotificationBatch: No listeners or messages", {
+        listenerCount: listenersToNotify.length,
+        messageCount: messages.length
+      });
       return;
     }
 
@@ -486,8 +496,13 @@ export class MessageProcessor {
 
       for (let i = startIndex; i < endIndex; i++) {
         const msg = messages[i];
-        listenersToNotify.forEach((listener) => {
+        listenersToNotify.forEach((listener, index) => {
           try {
+            console.log(`🔍 MessageProcessor.processNotificationBatch: Calling listener ${index} with message:`, {
+              id: msg.id,
+              from: msg.from?.slice(0, 8) + "...",
+              content: msg.content?.substring(0, 20) + "..."
+            });
             listener(msg);
           } catch (error) {
             console.error("Error in listener:", error);
@@ -537,10 +552,12 @@ export class MessageProcessor {
    */
   public onMessage(callback: MessageListener): void {
     if (typeof callback !== "function") {
+      console.warn("⚠️ MessageProcessor.onMessage: Invalid callback provided");
       return;
     }
 
     this.messageListeners.push(callback);
+    console.log("🔍 MessageProcessor.onMessage: Listener registered, total listeners:", this.messageListeners.length);
   }
 
   /**

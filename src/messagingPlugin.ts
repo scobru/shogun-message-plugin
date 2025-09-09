@@ -40,7 +40,7 @@ export class MessagingPlugin extends BasePlugin {
     totalResponseTime: 0,
     responseCount: 0,
   };
-
+  
   // **FIXED: Enhanced monitoring and security**
   private metricsCollector: MetricsCollector;
   private healthChecker: HealthChecker;
@@ -81,7 +81,7 @@ export class MessagingPlugin extends BasePlugin {
     this.publicRoomManager = null as any;
     this.tokenRoomManager = null as any;
     this.legacyMessaging = null as any;
-
+    
     // **FIXED: Initialize enhanced monitoring and security**
     this.metricsCollector = new MetricsCollector();
     this.healthChecker = new HealthChecker(this.metricsCollector);
@@ -184,7 +184,7 @@ export class MessagingPlugin extends BasePlugin {
           error: contentValidation.error,
         };
       }
-
+      
       const currentUserPair = (this.core.db.user as any)._?.sea;
       if (!currentUserPair) {
         return {
@@ -192,7 +192,7 @@ export class MessagingPlugin extends BasePlugin {
           error: "User key pair not available",
         };
       }
-
+      
       // **FIXED: Rate limiting check**
       if (!this.rateLimiter.isAllowed(currentUserPair.pub)) {
         return {
@@ -269,7 +269,7 @@ export class MessagingPlugin extends BasePlugin {
           finalRecipientEpub =
             await this.encryptionManager.getRecipientEpub(recipientPub);
         }
-
+        
         const sharedSecret = await this.core.db.sea.secret(
           finalRecipientEpub,
           currentUserPair
@@ -724,7 +724,7 @@ export class MessagingPlugin extends BasePlugin {
         );
         return cachedEpub;
       }
-
+      
       // If not in cache, perform lookup
       console.log(
         "🚀 getRecipientEpubOptimized: Cache miss, performing lookup for",
@@ -2164,7 +2164,7 @@ export class MessagingPlugin extends BasePlugin {
 
       // Get current username
       const currentUsername = await this.getUsername(currentUserPair.pub);
-
+      
       // If the new username is the same as current, just sync profile data
       if (currentUsername === newUsername) {
         console.log("ℹ️ Username is the same, just syncing profile data");
