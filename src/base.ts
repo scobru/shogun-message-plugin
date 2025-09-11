@@ -1,4 +1,5 @@
-import { ShogunCore } from "shogun-core";
+import { PluginCategory, ShogunCore } from "shogun-core";
+
 
 /**
  * Base class for Shogun plugins
@@ -17,7 +18,7 @@ export abstract class BasePlugin {
   abstract version: string;
   abstract description: string;
   // Use loose typing to avoid hard dependency on specific core type exports
-  abstract _category?: string;
+  abstract _category?: PluginCategory;
 
   /**
    * Initialize the plugin with the core instance
@@ -162,3 +163,5 @@ export abstract class BasePlugin {
     throw new Error('Max retries exceeded');
   }
 }
+
+

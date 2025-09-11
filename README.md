@@ -1,1816 +1,347 @@
-# Shogun Message Plugin API Documentation
+# Shogun Message Plugin
 
-## Overview
+[![npm version](https://badge.fury.io/js/shogun-message-plugin.svg)](https://badge.fury.io/js/shogun-message-plugin)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-The Shogun Message Plugin provides end-to-end encrypted messaging capabilities for the Shogun SDK. This document describes the complete API surface and usage patterns.
+An advanced end-to-end encrypted messaging plugin for the Shogun ecosystem, inspired by Signal's security model with forward secrecy, message chaining, and group encryption capabilities.
 
-**🚀 PRODUCTION READY**: This plugin is now production-ready with enhanced error handling, performance monitoring, and robust retry mechanisms.
+## Features
 
-**📝 DOCUMENTATION UPDATED**: This README has been verified against the actual source code implementation to ensure accuracy.
+🔐 **End-to-End Encryption** - All messages are encrypted using GunDB's SEA (Security, Encryption, Authorization)  
+🔗 **Message Chaining** - Sequential message verification for enhanced security  
+🔄 **Forward Secrecy** - Automatic key rotation and cleanup  
+👥 **Group Messaging** - Encrypted group chats with shared keys  
+📨 **Inbox System** - Reliable message delivery with date-based organization  
+🌐 **Decentralized** - Built on GunDB for peer-to-peer communication  
+⚡ **Real-time** - Instant message delivery and synchronization  
+🛡️ **Secure** - Protection against replay attacks and message tampering  
 
 ## Installation
 
 ```bash
 npm install shogun-message-plugin
+# or
+yarn add shogun-message-plugin
 ```
 
 ## Quick Start
 
 ```typescript
-import { MessagingPlugin } from "shogun-message-plugin";
-import { ShogunCore } from "shogun-core";
+import { LindaLib } from 'shogun-message-plugin';
+import { ShogunCore } from 'shogun-core';
 
-// Initialize the plugin
-const messagingPlugin = new MessagingPlugin();
-await messagingPlugin.initialize(shogunCore);
+// Initialize the core
+const core = new ShogunCore({
+  peers: ['https://peer.wallie.io/gun', 'https://relay.shogun-eco.xyz/gun'],
+  scope: 'linda',
+  radisk: true,
+  localStorage: true
+});
 
-// Check health status
-const health = await messagingPlugin.getHealthStatus();
-if (!health.isHealthy) {
-  console.warn("Plugin health issues:", health.issues);
-}
+// Create messaging instance
+const messaging = new LindaLib(['https://peer.wallie.io/gun'], core);
 
-// Send a private message
-const result = await messagingPlugin.sendMessage(
-  recipientPublicKey,
-  "Hello, this is an encrypted message!"
-);
+// Login and start messaging
+await messaging.login('your-alias', 'your-password');
+await messaging.publishUserKeys();
+
+// Send a message
+const result = await messaging.sendMessage('recipient-public-key', 'Hello World!');
+console.log('Message sent:', result.success);
 ```
 
-## Core API Reference
+## Basic Usage
 
-### MessagingPlugin Class
-
-The main plugin class that orchestrates all messaging functionality.
-
-#### Constructor
+### Private Messaging
 
 ```typescript
-new MessagingPlugin();
-```
-
-#### Methods
-
-##### `initialize(core: ShogunCore): Promise<void>`
-
-Initializes the plugin with the Shogun core instance.
-
-**Parameters:**
-
-- `core` (ShogunCore): The Shogun core instance
-
-**Returns:** Promise<void>
-
-**Example:**
-
-```typescript
-await messagingPlugin.initialize(shogunCore);
-```
-
-##### `sendMessage(recipientPub: string, messageContent: string): Promise<MessageSendResult>`
-
-Sends a private end-to-end encrypted message to a recipient.
-
-**Parameters:**
-
-- `recipientPub` (string): The recipient's public key
-- `messageContent` (string): The message content to send (max 10,000 characters)
-
-**Returns:** Promise<MessageSendResult>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.sendMessage(
-  "recipient_public_key_here",
-  "Hello from Alice!"
+// Send an encrypted message
+const result = await messaging.sendMessage(
+  'recipient-public-key',
+  'Hello, this is encrypted!'
 );
 
-if (result.success) {
-  console.log("Message sent successfully:", result.messageId);
-} else {
-  console.error("Failed to send message:", result.error);
-}
-```
-
-##### **NEW: Legacy Compatibility Functions**
-
-###### `sendMessageDirect(recipientPub: string, recipientEpub: string, messageContent: string, options?: LegacyMessageOptions): Promise<LegacyMessageResult>`
-
-Sends a message to legacy paths for compatibility with existing frontend systems.
-
-**Parameters:**
-
-- `recipientPub` (string): The recipient's public key
-- `recipientEpub` (string): The recipient's encryption public key (get it via `getRecipientEpub(recipientPub)`)
-- `messageContent` (string): The message content to send
-- `options` (LegacyMessageOptions, optional): Additional options for legacy compatibility
-
-**Returns:** Promise<LegacyMessageResult>
-
-**Example:**
-
-```typescript
-const epub = await messagingPlugin.getRecipientEpub("recipient_public_key_here");
-const result = await messagingPlugin.sendMessageDirect(
-  "recipient_public_key_here",
-  epub,
-  "Hello from legacy path!",
-  {
-    messageType: "alias",
-    senderAlias: "Alice",
-    recipientAlias: "Bob"
-  }
-);
-
-if (result.success) {
-  console.log("Message sent to legacy path:", result.messageId);
-} else {
-  console.error("Failed to send to legacy path:", result.error);
-}
-```
-
-###### `receiveMessageDirect(options?: { limit?: number; before?: string; after?: string }): Promise<LegacyMessagesResult>`
-
-Receives messages from legacy paths for compatibility with existing frontend systems.
-
-**Parameters:**
-
-- `options` (object, optional): Options for message retrieval
-
-**Returns:** Promise<LegacyMessagesResult>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.receiveMessageDirect({ limit: 50 });
-
-if (result.success) {
-  console.log("Messages received from legacy path:", result.messages?.length);
-} else {
-  console.error("Failed to receive from legacy path:", result.error);
-}
-```
-
-###### `startListeningDirect(callback: (message: any) => void): void`
-
-Starts listening to legacy paths for real-time message compatibility.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a new message is received
-
-**Note:** The function listens for ALL incoming messages to the current user (recipient), not filtered to a specific contact, to ensure proper message delivery.
-
-**Example:**
-
-```typescript
-messagingPlugin.startListeningDirect((message) => {
-  console.log("New message from legacy path:", message);
+// Listen for messages
+messaging.listenForMessages('sender-public-key', (message) => {
+  console.log('Received:', message.content);
+  console.log('From:', message.from);
+  console.log('Timestamp:', new Date(message.timestamp));
 });
 ```
 
-###### `stopListeningToLegacyPaths(): void`
-
-Stops listening to legacy paths.
-
-**Example:**
+### Group Messaging
 
 ```typescript
-messagingPlugin.stopListeningToLegacyPaths();
-```
-
-##### `sendGroupMessage(groupId: string, messageContent: string): Promise<MessageSendResult>`
-
-Sends a message to a group chat using Multiple People Encryption (MPE).
-
-**Parameters:**
-
-- `groupId` (string): The group identifier
-- `messageContent` (string): The message content to send
-
-**Returns:** Promise<MessageSendResult>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.sendGroupMessage(
-  "group_123",
-  "Hello everyone in the group!"
-);
-```
-
-##### `sendTokenRoomMessage(roomId: string, messageContent: string, token: string): Promise<MessageSendResult>`
-
-Sends an encrypted message to a token-based room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-- `messageContent` (string): The message content to send
-- `token` (string): The token required for room access
-
-**Returns:** Promise<MessageSendResult>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.sendTokenRoomMessage(
-  "private_room_456",
-  "Secret message for token holders!",
-  "room_access_token"
-);
-```
-
-##### `sendPublicMessage(roomId: string, messageContent: string): Promise<MessageSendResult>`
-
-Sends a signed message to a public room.
-
-**Parameters:**
-
-- `roomId` (string): The public room identifier
-- `messageContent` (string): The message content to send
-
-**Returns:** Promise<MessageSendResult>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.sendPublicMessage(
-  "general_chat",
-  "Hello public room!"
-);
-```
-
-### Production Features
-
-#### Health Monitoring
-
-##### `getHealthStatus(): Promise<HealthStatus>`
-
-Get comprehensive health status of the plugin and all components.
-
-**Returns:** Promise<HealthStatus>
-
-**Example:**
-
-```typescript
-const health = await messagingPlugin.getHealthStatus();
-
-if (health.isHealthy) {
-  console.log("Plugin is healthy");
-} else {
-  console.warn("Health issues:", health.issues);
-  console.log("Component status:", health.components);
-  console.log("Performance metrics:", health.performance);
-}
-```
-
-#### Performance Monitoring
-
-##### `getStats(): PluginStats`
-
-Get detailed performance statistics and metrics.
-
-**Returns:** PluginStats
-
-**Example:**
-
-```typescript
-const stats = messagingPlugin.getStats();
-
-console.log("Performance metrics:", {
-  messagesSent: stats.performanceMetrics.messagesSent,
-  averageResponseTime: stats.performanceMetrics.averageResponseTime,
-  encryptionOperations: stats.performanceMetrics.encryptionOperations,
-});
-```
-
-#### Enhanced Error Handling
-
-All methods now include:
-
-- **Input validation** with detailed error messages
-- **Automatic retry** with exponential backoff
-- **Operation tracking** for metrics
-- **Safe operation wrappers** with error boundaries
-
-### Group Management
-
-#### `createGroup(groupName: string, memberPubs: string[]): Promise<{ success: boolean; groupData?: any; error?: string }>`
-
-Creates a new group chat with the specified members.
-
-**Parameters:**
-
-- `groupName` (string): Name for the group
-- `memberPubs` (string[]): Array of member public keys
-
-**Returns:** Promise<{ success: boolean; groupData?: any; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.createGroup("My Team Chat", [
-  "member1_pub",
-  "member2_pub",
-  "member3_pub",
-]);
-
-if (result.success) {
-  console.log("Group created:", result.groupData.id);
-} else {
-  console.error("Failed to create group:", result.error);
-}
-```
-
-#### `addGroupListener(groupId: string): void`
-
-Adds a listener for group messages.
-
-**Parameters:**
-
-- `groupId` (string): The group identifier
-
-**Example:**
-
-```typescript
-messagingPlugin.addGroupListener("group_123");
-```
-
-#### `removeGroupListener(groupId: string): void`
-
-Removes a group message listener.
-
-**Parameters:**
-
-- `groupId` (string): The group identifier
-
-**Example:**
-
-```typescript
-messagingPlugin.removeGroupListener("group_123");
-```
-
-#### `hasGroupListener(groupId: string): boolean`
-
-Checks if a group has an active listener.
-
-**Parameters:**
-
-- `groupId` (string): The group identifier
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const hasListener = messagingPlugin.hasGroupListener("group_123");
-console.log("Group has listener:", hasListener);
-```
-
-### Room Management
-
-#### `createPublicRoom(roomName: string, description?: string): Promise<{ success: boolean; roomData?: any; error?: string }>`
-
-Creates a new public room.
-
-**Parameters:**
-
-- `roomName` (string): Name for the public room
-- `description` (string, optional): Description for the room
-
-**Returns:** Promise<{ success: boolean; roomData?: any; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.createPublicRoom(
-  "General Discussion",
-  "Main discussion room"
+// Create a group
+const groupId = await messaging.createGroup(
+  'My Team',
+  ['member1-pub', 'member2-pub', 'member3-pub']
 );
 
-if (result.success) {
-  console.log("Public room created:", result.roomData.id);
-}
+// Send group message
+await messaging.sendGroupMessage(groupId, 'Welcome to the team!');
+
+// Listen for group messages
+messaging.listenForGroupMessages(groupId, (message) => {
+  console.log(`[${message.from}]: ${message.content}`);
+});
 ```
 
-#### `createTokenRoom(roomName: string, description?: string, maxParticipants?: number): Promise<{ success: boolean; roomData?: any; error?: string }>`
-
-Creates a new token-based encrypted room.
-
-**Parameters:**
-
-- `roomName` (string): Name for the token room
-- `description` (string, optional): Description for the room
-- `maxParticipants` (number, optional): Maximum number of participants
-
-**Returns:** Promise<{ success: boolean; roomData?: any; error?: string }>
-
-**Example:**
+### Inbox System
 
 ```typescript
-const result = await messagingPlugin.createTokenRoom(
-  "Private Discussion",
-  "Secret discussion room",
-  10
+// Start listening for inbox messages
+messaging.startInboxListening((message) => {
+  console.log('New message:', message.content);
+});
+
+// Send via inbox system
+await messaging.sendMessageInbox(
+  'recipient-pub',
+  'recipient-epub',
+  'Message content'
 );
 
-if (result.success) {
-  console.log("Token room created:", result.roomData.id);
+// Retrieve inbox messages
+const inboxResult = await messaging.receiveMessageInbox({ limit: 50 });
+if (inboxResult.success) {
+  inboxResult.messages?.forEach(msg => {
+    console.log('Inbox message:', msg);
+  });
 }
 ```
 
-#### `startRoomDiscovery(): void`
+## Advanced Features
 
-Starts the room discovery process.
+### Message Chaining
 
-**Example:**
+The plugin implements message chaining for enhanced security:
 
 ```typescript
-messagingPlugin.startRoomDiscovery();
+// Get chain statistics
+const stats = messaging.getChainStats('recipient-public-key');
+console.log('Message count:', stats.messageCount);
+console.log('Last index:', stats.lastIndex);
+console.log('Chain ID:', stats.chainId);
 ```
 
-#### `stopRoomDiscovery(): void`
-
-Stops the room discovery process.
-
-**Example:**
+### User Key Management
 
 ```typescript
-messagingPlugin.stopRoomDiscovery();
+// Check if user keys are published
+const published = await messaging.areUserKeysPublished();
+
+// Force publish keys (useful for debugging)
+const result = await messaging.forcePublishUserKeys();
+
+// Debug user keys
+const debug = await messaging.debugUserKeys('user-public-key');
 ```
 
-#### `initializeDefaultRooms(): Promise<void>`
-
-Initializes default public rooms if none exist.
-
-**Returns:** Promise<void>
-
-**Example:**
+### Plugin Status
 
 ```typescript
-await messagingPlugin.initializeDefaultRooms();
+// Get comprehensive plugin status
+const status = messaging.getPluginStatus();
+console.log('Initialized:', status.isInitialized);
+console.log('User logged in:', status.userLoggedIn);
+console.log('Public key:', status.publicKey);
+console.log('Message chains:', status.messageChains);
+console.log('Group keys:', status.groupKeys);
+console.log('Inbox listening:', status.inboxListening);
 ```
 
-### Message Listening
+## Configuration
 
-#### `startListening(): Promise<void>`
-
-**PRODUCTION READY**: Starts listening for incoming messages with enhanced performance and error handling.
-
-**Returns:** Promise<void>
-
-**Features:**
-
-- Automatic retry with exponential backoff
-- Performance monitoring
-- Error tracking and recovery
-- Memory management
-
-**Example:**
+### Core Configuration
 
 ```typescript
-await messagingPlugin.startListening();
-```
-
-#### `stopListening(): Promise<void>`
-
-**PRODUCTION READY**: Stops listening for incoming messages with proper cleanup.
-
-**Returns:** Promise<void>
-
-**Features:**
-
-- Proper resource cleanup
-- Memory leak prevention
-- Performance metrics finalization
-
-**Example:**
-
-```typescript
-await messagingPlugin.stopListening();
-```
-
-#### `onMessage(callback: (message: MessageData) => void): void`
-
-**PRODUCTION READY**: Registers a callback for incoming messages with enhanced filtering.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a message is received
-
-**Features:**
-
-- Message deduplication
-- Performance filtering
-- Error boundary protection
-- Memory optimization
-
-**Example:**
-
-```typescript
-messagingPlugin.onMessage((message) => {
-  console.log("Received message:", message.content);
-  console.log("From:", message.from);
-  console.log("Timestamp:", message.timestamp);
+const core = new ShogunCore({
+  peers: [
+    'https://peer.wallie.io/gun',
+    'https://relay.shogun-eco.xyz/gun'
+  ],
+  scope: 'linda',
+  radisk: true,        // Enable persistent storage
+  localStorage: true   // Enable browser storage
 });
 ```
 
-#### `joinChat(chatType: string, chatId: string, token?: string): Promise<JoinChatResult>`
-
-**PRODUCTION READY**: Join different types of chats with enhanced validation.
-
-**Parameters:**
-
-- `chatType` (string): Type of chat ("private", "public", "group", "token")
-- `chatId` (string): Chat identifier
-- `token` (string, optional): Token for token rooms
-
-**Features:**
-
-- Enhanced input validation
-- Performance optimization
-- Error handling with retry
-- Automatic listener activation
-
-**Example:**
+### Plugin Configuration
 
 ```typescript
-// Join a group chat
-const result = await messagingPlugin.joinChat("group", "group_123");
-if (result.success) {
-  console.log("Joined group:", result.chatData);
-}
-
-// Join a token room
-const tokenResult = await messagingPlugin.joinChat(
-  "token",
-  "room_456",
-  "token_xyz"
+const messaging = new LindaLib(
+  ['https://peer.wallie.io/gun'], // Peers
+  core                            // ShogunCore instance
 );
-if (tokenResult.success) {
-  console.log("Joined token room:", result.chatData);
-}
-```
-
-### Protocol Listeners
-
-#### `startProtocolListeners(): void`
-
-Starts all protocol-level listeners.
-
-**Example:**
-
-```typescript
-messagingPlugin.startProtocolListeners();
-```
-
-#### `stopProtocolListeners(): void`
-
-Stops all protocol-level listeners.
-
-**Example:**
-
-```typescript
-messagingPlugin.stopProtocolListeners();
-```
-
-#### `areProtocolListenersActive(): boolean`
-
-Checks if protocol listeners are active.
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const areActive = messagingPlugin.areProtocolListenersActive();
-console.log("Protocol listeners active:", areActive);
-```
-
-#### `areGroupListenersActive(): boolean`
-
-Checks if group listeners are active.
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const areActive = messagingPlugin.areGroupListenersActive();
-console.log("Group listeners active:", areActive);
-```
-
-#### `areTokenRoomListenersActive(): boolean`
-
-Checks if token room listeners are active.
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const areActive = messagingPlugin.areTokenRoomListenersActive();
-console.log("Token room listeners active:", areActive);
-```
-
-### Raw Message Handling
-
-#### `onRawMessage(callback: any): void`
-
-Registers a callback for raw messages.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a raw message is received
-
-**Example:**
-
-```typescript
-messagingPlugin.onRawMessage((message) => {
-  console.log("Raw message received:", message);
-});
-```
-
-#### `onRawPublicMessage(callback: any): void`
-
-Registers a callback for raw public messages.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a raw public message is received
-
-**Example:**
-
-```typescript
-messagingPlugin.onRawPublicMessage((message) => {
-  console.log("Raw public message received:", message);
-});
-```
-
-#### `onRawTokenRoomMessage(callback: any): void`
-
-Registers a callback for raw token room messages.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a raw token room message is received
-
-**Example:**
-
-```typescript
-messagingPlugin.onRawTokenRoomMessage((message) => {
-  console.log("Raw token room message received:", message);
-});
-```
-
-#### `onRawGroupMessage(callback: any): void`
-
-Registers a callback for raw group messages.
-
-**Parameters:**
-
-- `callback` (function): Function to call when a raw group message is received
-
-**Example:**
-
-```typescript
-messagingPlugin.onRawGroupMessage((message) => {
-  console.log("Raw group message received:", message);
-});
-```
-
-### Public Room Management
-
-#### `startListeningPublic(roomId: string): void`
-
-Starts listening to a specific public room.
-
-**Parameters:**
-
-- `roomId` (string): The public room identifier
-
-**Example:**
-
-```typescript
-messagingPlugin.startListeningPublic("general_chat");
-```
-
-#### `stopListeningPublic(): void`
-
-Stops listening to public rooms.
-
-**Example:**
-
-```typescript
-messagingPlugin.stopListeningPublic();
-```
-
-#### `stopListeningToPublicRoom(roomId: string): void`
-
-Stops listening to a specific public room.
-
-**Parameters:**
-
-- `roomId` (string): The public room identifier
-
-**Example:**
-
-```typescript
-messagingPlugin.stopListeningToPublicRoom("general_chat");
-```
-
-#### `hasActivePublicRoomListener(roomId: string): boolean`
-
-Checks if a specific public room has an active listener.
-
-**Parameters:**
-
-- `roomId` (string): The public room identifier
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const hasListener = messagingPlugin.hasActivePublicRoomListener("general_chat");
-console.log("Public room has listener:", hasListener);
-```
-
-#### `getPublicRoomMessages(roomId: string, options?: { limit?: number; before?: string; after?: string }): Promise<any[]>`
-
-Gets public room messages from localStorage.
-
-**Parameters:**
-
-- `roomId` (string): The public room identifier
-- `limit` (number, optional): Maximum number of messages to retrieve
-
-**Returns:** Promise<any[]>
-
-**Example:**
-
-```typescript
-const messages = await messagingPlugin.getPublicRoomMessages("general_chat", { limit: 50 });
-console.log("Public room messages:", messages);
-```
-
-#### `removePublicMessageListener(callback: any): void`
-
-Removes a specific public message listener callback.
-
-**Parameters:**
-
-- `callback` (function): The callback to remove
-
-**Example:**
-
-```typescript
-messagingPlugin.removePublicMessageListener(myCallbackFunction);
-```
-
-### Token Room Management
-
-#### `startListeningTokenRooms(): void`
-
-Starts listening to token rooms.
-
-**Example:**
-
-```typescript
-messagingPlugin.startListeningTokenRooms();
-```
-
-#### `stopListeningTokenRooms(): void`
-
-Stops listening to token rooms.
-
-**Example:**
-
-```typescript
-messagingPlugin.stopListeningTokenRooms();
-```
-
-#### `startTokenRoomMessageListener(roomId: string, callback: (message: any) => void): Promise<{ success: boolean; error?: string }>`
-
-Starts listening to messages from a specific token room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-- `callback` (function): Callback invoked for each incoming token-room message
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-await messagingPlugin.startTokenRoomMessageListener("private_room_456", (m) => console.log(m));
-```
-
-#### `stopTokenRoomMessageListener(roomId: string): Promise<{ success: boolean; error?: string }>`
-
-Stops listening to messages from a specific token room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-await messagingPlugin.stopTokenRoomMessageListener("private_room_456");
-```
-
-#### `getTokenRoomMessages(roomId: string): Promise<any[]>`
-
-Gets messages from a specific token room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-
-**Returns:** Promise<any[]>
-
-**Example:**
-
-```typescript
-const messages = await messagingPlugin.getTokenRoomMessages("private_room_456");
-console.log("Token room messages:", messages);
-```
-
-#### `deleteTokenRoom(roomId: string): Promise<{ success: boolean; error?: string }>`
-
-Deletes a token room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.deleteTokenRoom("private_room_456");
-if (result.success) {
-  console.log("Token room deleted successfully");
-} else {
-  console.error("Failed to delete token room:", result.error);
-}
-```
-
-### Conversation Management
-
-#### `clearConversation(contactPub: string): Promise<{ success: boolean; error?: string }>`
-
-Clears all messages from a conversation.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.clearConversation("contact_public_key");
-if (result.success) {
-  console.log("Conversation cleared successfully");
-} else {
-  console.error("Failed to clear conversation:", result.error);
-}
-```
-
-#### `setMessagesToNull(contactPub: string): Promise<{ success: boolean; error?: string }>`
-
-Sets all messages in a conversation to null.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.setMessagesToNull("contact_public_key");
-if (result.success) {
-  console.log("Messages set to null successfully");
-} else {
-  console.error("Failed to set messages to null:", result.error);
-}
-```
-
-#### `clearSingleMessage(contactPub: string, messageId: string): Promise<{ success: boolean; error?: string }>`
-
-Clears a single message from a conversation.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-- `messageId` (string): The message identifier
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.clearSingleMessage("contact_public_key", "message_123");
-if (result.success) {
-  console.log("Message cleared successfully");
-} else {
-  console.error("Failed to clear message:", result.error);
-}
-```
-
-#### `verifyConversationCleared(contactPub: string): Promise<{ success: boolean; error?: string }>`
-
-Verifies that a conversation has been cleared.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.verifyConversationCleared("contact_public_key");
-if (result.success) {
-  console.log("Conversation cleared verification successful");
-} else {
-  console.error("Conversation cleared verification failed:", result.error);
-}
-```
-
-#### `markConversationAsCleared(from: string, to: string): void`
-
-Marks a conversation as cleared.
-
-**Parameters:**
-
-- `from` (string): The sender's public key
-- `to` (string): The recipient's public key
-
-**Example:**
-
-```typescript
-messagingPlugin.markConversationAsCleared("sender_pub", "recipient_pub");
-```
-
-#### `isConversationCleared(from: string, to: string): boolean`
-
-Checks if a conversation is marked as cleared.
-
-**Parameters:**
-
-- `from` (string): The sender's public key
-- `to` (string): The recipient's public key
-
-**Returns:** boolean
-
-**Example:**
-
-```typescript
-const isCleared = messagingPlugin.isConversationCleared("sender_pub", "recipient_pub");
-console.log("Conversation is cleared:", isCleared);
-```
-
-#### `removeClearedConversation(from: string, to: string): void`
-
-Removes the cleared status from a conversation.
-
-**Parameters:**
-
-- `from` (string): The sender's public key
-- `to` (string): The recipient's public key
-
-**Example:**
-
-```typescript
-messagingPlugin.removeClearedConversation("sender_pub", "recipient_pub");
-```
-
-#### `resetClearedConversations(): void`
-
-Resets all cleared conversation statuses.
-
-**Example:**
-
-```typescript
-messagingPlugin.resetClearedConversations();
-```
-
-#### `resetClearedConversation(contactPub: string): void`
-
-Resets the cleared status for a specific contact.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Example:**
-
-```typescript
-messagingPlugin.resetClearedConversation("contact_public_key");
-```
-
-#### `reloadMessages(contactPub: string): Promise<any[]>`
-
-Reloads messages for a specific contact.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<any[]>
-
-**Example:**
-
-```typescript
-const messages = await messagingPlugin.reloadMessages("contact_public_key");
-console.log("Reloaded messages:", messages);
-```
-
-#### `loadExistingMessages(contactPub: string): Promise<any[]>`
-
-Loads existing messages for a specific contact.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<any[]>
-
-**Example:**
-
-```typescript
-const messages = await messagingPlugin.loadExistingMessages("contact_public_key");
-console.log("Existing messages:", messages);
-```
-
-### Message Content Management
-
-#### `removeMessage(messageId: string): Promise<{ success: boolean; error?: string }>`
-
-Removes a specific message.
-
-**Parameters:**
-
-- `messageId` (string): The message identifier
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.removeMessage("message_123");
-if (result.success) {
-  console.log("Message removed successfully");
-} else {
-  console.error("Failed to remove message:", result.error);
-}
-```
-
-#### `removeConversationMessages(contactPub: string): Promise<{ success: boolean; removedCount: number; error?: string }>`
-
-Removes multiple messages from a conversation.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<{ success: boolean; removedCount: number; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.removeConversationMessages("contact_public_key");
-if (result.success) {
-  console.log("Messages removed:", result.removedCount);
-} else {
-  console.error("Failed to remove messages:", result.error);
-}
-```
-
-### Utility Methods
-
-#### `getPublicRooms(): Promise<PublicRoom[]>`
-
-Retrieves available public rooms.
-
-**Returns:** Promise<PublicRoom[]>
-
-**Example:**
-
-```typescript
-const rooms = await messagingPlugin.getPublicRooms();
-console.log("Public rooms:", rooms);
-```
-
-#### `getGroupData(groupId: string): Promise<any | null>`
-
-Retrieves data for a specific group.
-
-**Parameters:**
-
-- `groupId` (string): The group identifier
-
-**Returns:** Promise<any | null>
-
-**Example:**
-
-```typescript
-const groupData = await messagingPlugin.getGroupData("group_123");
-console.log("Group data:", groupData);
-```
-
-#### `getTokenRoomData(roomId: string): Promise<any | null>`
-
-Retrieves data for a specific token room.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-
-**Returns:** Promise<any | null>
-
-**Example:**
-
-```typescript
-const roomData = await messagingPlugin.getTokenRoomData("room_456");
-console.log("Token room data:", roomData);
-```
-
-#### `getRecipientEpub(recipientPub: string): Promise<string>`
-
-Gets the encryption public key for a recipient.
-
-**Parameters:**
-
-- `recipientPub` (string): The recipient's public key
-
-**Returns:** Promise<string>
-
-**Example:**
-
-```typescript
-const epub = await messagingPlugin.getRecipientEpub("recipient_public_key");
-console.log("Recipient epub:", epub);
-```
-
-#### `publishUserEpub(epub?: string): Promise<{ success: boolean; error?: string }>`
-
-Publishes the current user's encryption public key. If `epub` is provided, publishes that value; otherwise auto-publishes the current user's epub.
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.publishUserEpub();
-if (result.success) {
-  console.log("User epub published successfully");
-} else {
-  console.error("Failed to publish user epub:", result.error);
-}
-```
-
-#### `checkUserEpubAvailability(userPub: string): Promise<{ available: boolean; epub?: string; error?: string }>`
-
-Checks if a user's encryption public key is available.
-
-**Parameters:**
-
-- `userPub` (string): The user's public key
-
-**Returns:** Promise<{ available: boolean; epub?: string; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.checkUserEpubAvailability("user_public_key");
-if (result.available) {
-  console.log("User epub available:", result.epub);
-} else {
-  console.log("User epub not available");
-}
-```
-
-#### `getCurrentUserEpub(): string | null`
-
-Gets the current user's encryption public key.
-
-**Returns:** string | null
-
-**Example:**
-
-```typescript
-const epub = messagingPlugin.getCurrentUserEpub();
-if (epub) {
-  console.log("Current user epub:", epub);
-} else {
-  console.log("No epub available for current user");
-}
-```
-
-#### `joinTokenRoom(roomId: string, token: string): Promise<{ success: boolean; roomData?: any; error?: string }>`
-
-Joins a token room with the provided token.
-
-**Parameters:**
-
-- `roomId` (string): The token room identifier
-- `token` (string): The token required for room access
-
-**Returns:** Promise<{ success: boolean; roomData?: any; error?: string }>
-
-**Example:**
-
-```typescript
-const result = await messagingPlugin.joinTokenRoom("room_456", "access_token");
-if (result.success) {
-  console.log("Joined token room successfully");
-} else {
-  console.error("Failed to join token room:", result.error);
-}
-```
-
-### Debug and Development
-
-#### `debugMessagePaths(contactPub: string): Promise<void>`
-
-Debug utility to inspect message paths for a contact.
-
-**Parameters:**
-
-- `contactPub` (string): The contact's public key
-
-**Returns:** Promise<void>
-
-**Example:**
-
-```typescript
-await messagingPlugin.debugMessagePaths("contact_public_key");
-```
-
-#### `registerConversationPathListener(conversationPath: string): void`
-
-Registers a listener for a specific conversation path.
-
-**Parameters:**
-
-- `conversationPath` (string): The conversation path to listen to
-
-**Example:**
-
-```typescript
-messagingPlugin.registerConversationPathListener("conversation_path_here");
-```
-
-### Listener Status and Management
-
-#### `getListenerStatus(): { isListening: boolean; isListeningGroups: boolean; isListeningTokenRooms: boolean; messageListenersCount: number; groupListenersCount: number; tokenRoomListenersCount: number; processedMessagesCount: number; clearedConversationsCount: number; hasActiveListener: boolean }`
-
-Gets the current status of all listeners.
-
-**Returns:** Object with listener status information
-
-**Example:**
-
-```typescript
-const status = messagingPlugin.getListenerStatus();
-console.log("Listener status:", {
-  isListening: status.isListening,
-  isListeningGroups: status.isListeningGroups,
-  isListeningTokenRooms: status.isListeningTokenRooms,
-  messageListenersCount: status.messageListenersCount,
-  groupListenersCount: status.groupListenersCount,
-  tokenRoomListenersCount: status.tokenRoomListenersCount,
-  processedMessagesCount: status.processedMessagesCount,
-  clearedConversationsCount: status.clearedConversationsCount,
-  hasActiveListener: status.hasActiveListener
-});
-```
-
-### Cleanup and Resource Management
-
-#### `cleanup(): void`
-
-Performs cleanup operations and resource management.
-
-**Example:**
-
-```typescript
-messagingPlugin.cleanup();
-```
-
-### Testing and Development
-
-#### `groupManagerForTesting: GroupManager`
-
-Getter for accessing the group manager for testing purposes.
-
-**Example:**
-
-```typescript
-const groupManager = messagingPlugin.groupManagerForTesting;
-```
-
-#### `encryptionManagerForTesting: EncryptionManager`
-
-Getter for accessing the encryption manager for testing purposes.
-
-**Example:**
-
-```typescript
-const encryptionManager = messagingPlugin.encryptionManagerForTesting;
-```
-
-#### `tokenRoomManagerForTesting: TokenRoomManager`
-
-Getter for accessing the token room manager for testing purposes.
-
-**Example:**
-
-```typescript
-const tokenRoomManager = messagingPlugin.tokenRoomManagerForTesting;
-```
-
-#### `publicRoomManagerForTesting: PublicRoomManager`
-
-Getter for accessing the public room manager for testing purposes.
-
-**Example:**
-
-```typescript
-const publicRoomManager = messagingPlugin.publicRoomManagerForTesting;
-```
-
-### **NEW: Complete Username Management**
-
-#### `registerUsername(username: string): Promise<{ success: boolean; error?: string }>`
-
-Registers a username for the current user.
-
-**Parameters:**
-- `username` (string): The username to register
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-```typescript
-const result = await messagingPlugin.registerUsername("alice123");
-if (result.success) {
-  console.log("Username registered successfully");
-} else {
-  console.error("Failed to register username:", result.error);
-}
-```
-
-#### `updateUsername(newUsername: string): Promise<{ success: boolean; error?: string }>`
-
-Updates the username for the current user.
-
-**Parameters:**
-- `newUsername` (string): The new username
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-```typescript
-const result = await messagingPlugin.updateUsername("alice456");
-if (result.success) {
-  console.log("Username updated successfully");
-} else {
-  console.error("Failed to update username:", result.error);
-}
-```
-
-#### `deleteUsername(): Promise<{ success: boolean; error?: string }>`
-
-Deletes the username for the current user.
-
-**Returns:** Promise<{ success: boolean; error?: string }>
-
-**Example:**
-```typescript
-const result = await messagingPlugin.deleteUsername();
-if (result.success) {
-  console.log("Username deleted successfully");
-} else {
-  console.error("Failed to delete username:", result.error);
-}
-```
-
-#### `getUsername(userPub: string): Promise<string | null>`
-
-Gets the username for a specific user.
-
-**Parameters:**
-- `userPub` (string): The user's public key
-
-**Returns:** Promise<string | null>
-
-**Example:**
-```typescript
-const username = await messagingPlugin.getUsername("user_public_key");
-if (username) {
-  console.log("Username:", username);
-} else {
-  console.log("No username found");
-}
-```
-
-#### `isUsernameAvailable(username: string): Promise<boolean>`
-
-Checks if a username is available for registration.
-
-**Parameters:**
-- `username` (string): The username to check
-
-**Returns:** Promise<boolean>
-
-**Example:**
-```typescript
-const isAvailable = await messagingPlugin.isUsernameAvailable("alice123");
-if (isAvailable) {
-  console.log("Username is available");
-} else {
-  console.log("Username is already taken");
-}
-```
-
-#### `validateUsername(username: string): { isValid: boolean; error?: string }`
-
-Validates a username format.
-
-**Parameters:**
-- `username` (string): The username to validate
-
-**Returns:** { isValid: boolean; error?: string }
-
-**Example:**
-```typescript
-const validation = messagingPlugin.validateUsername("alice123");
-if (validation.isValid) {
-  console.log("Username format is valid");
-} else {
-  console.error("Username validation failed:", validation.error);
-}
-```
-
-#### `generateRandomUsername(): string`
-
-Generates a random username.
-
-**Returns:** string
-
-**Example:**
-```typescript
-const randomUsername = messagingPlugin.generateRandomUsername();
-console.log("Generated username:", randomUsername);
-```
-
-## Types and Interfaces
-
-### MessageSendResult
-
-```typescript
-interface MessageSendResult {
-  success: boolean;
-  messageId?: string;
-  error?: string;
-}
-```
-
-### DecryptedMessage
-
-```typescript
-interface DecryptedMessage {
-  from: string;
-  to: string;
-  content: string;
-  timestamp: number;
-  id: string;
-}
-```
-
-### HealthStatus
-
-```typescript
-interface HealthStatus {
-  isHealthy: boolean;
-  issues: string[];
-  components: {
-    core: boolean;
-    encryption: boolean;
-    messageProcessor: boolean;
-    groupManager: boolean;
-    publicRoomManager: boolean;
-    tokenRoomManager: boolean;
-  };
-  performance: PerformanceMetrics;
-}
-```
-
-### PerformanceMetrics
-
-```typescript
-interface PerformanceMetrics {
-  messagesSent: number;
-  messagesReceived: number;
-  encryptionOperations: number;
-  averageResponseTime: number;
-  totalResponseTime: number;
-  responseCount: number;
-}
-```
-
-### PluginStats
-
-```typescript
-interface PluginStats {
-  isListening: boolean;
-  messageListenersCount: number;
-  processedMessagesCount: number;
-  hasActiveListener: boolean;
-  performanceMetrics: PerformanceMetrics;
-}
-```
-
-### JoinChatResult
-
-```typescript
-interface JoinChatResult {
-  success: boolean;
-  chatData?: any;
-  error?: string;
-}
-```
-
-### MessageData
-
-```typescript
-interface MessageData {
-  from: string;
-  content: string;
-  timestamp: number;
-  id: string;
-  signature?: string;
-  roomId?: string; // For public room messages
-  isPublic?: boolean; // Flag to distinguish public from private messages
-  groupId?: string; // For group messages
-  isGroup?: boolean; // Flag to distinguish group messages
-  isEncrypted?: boolean; // Flag to indicate if the message was encrypted
-}
-```
-
-### **NEW: Username Management Types**
-
-#### UsernameValidationResult
-
-```typescript
-interface UsernameValidationResult {
-  isValid: boolean;
-  error?: string;
-}
-```
-
-#### UsernameRegistrationResult
-
-```typescript
-interface UsernameRegistrationResult {
-  success: boolean;
-  error?: string;
-  username?: string;
-}
 ```
 
 ## Error Handling
 
-The plugin uses a centralized error handling system with production-ready features:
-
-### Error Handling Features
-
-- **Input validation** with detailed error messages
-- **Automatic retry** with exponential backoff
-- **Operation tracking** for debugging
-- **Safe operation wrappers** with error boundaries
-- **Performance monitoring** for error correlation
-
-### Error Handling Example
-
 ```typescript
 try {
-  const result = await messagingPlugin.sendMessage(recipient, message);
+  const result = await messaging.sendMessage(recipientPub, content);
   if (!result.success) {
-    throw new Error(result.error);
+    console.error('Send failed:', result.error);
+    // Handle specific errors
+    switch (result.error) {
+      case 'Utente non loggato.':
+        await messaging.login(alias, password);
+        break;
+      case 'Core non inizializzato.':
+        await messaging.initialize(core);
+        break;
+      default:
+        console.error('Unknown error:', result.error);
+    }
   }
 } catch (error) {
-  console.error("Failed to send message:", error);
-  // Implement retry logic or user notification
+  console.error('Unexpected error:', error);
 }
 ```
 
-## Performance Monitoring
+## Browser Support
 
-The plugin includes comprehensive performance monitoring capabilities.
+The plugin works in both Node.js and browser environments:
 
-### Performance Metrics
+### Browser
 
-```typescript
-interface PerformanceMetrics {
-  messagesSent: number;
-  messagesReceived: number;
-  encryptionOperations: number;
-  averageResponseTime: number;
-  totalResponseTime: number;
-  responseCount: number;
-}
+```html
+<script src="https://unpkg.com/gun/gun.js"></script>
+<script src="https://unpkg.com/shogun-message-plugin/dist/browser/index.js"></script>
+<script>
+  const messaging = new ShogunMessage.LindaLib();
+</script>
 ```
 
-### Performance Monitoring Example
+### Node.js
 
 ```typescript
-// Monitor encryption performance
-const startTime = performance.now();
-const result = await messagingPlugin.sendMessage(recipient, message);
-const encryptionTime = performance.now() - startTime;
-
-console.log(`Encryption took ${encryptionTime}ms`);
-
-// Get comprehensive stats
-const stats = messagingPlugin.getStats();
-console.log("Performance metrics:", stats.performanceMetrics);
+import { LindaLib } from 'shogun-message-plugin';
+import { ShogunCore } from 'shogun-core';
 ```
 
-## Production Best Practices
+## API Reference
 
-### 1. Health Monitoring
+For complete API documentation, see [API.md](./API.md).
 
-Always implement health checks in production:
+### Main Methods
 
-```typescript
-// Regular health checks
-setInterval(async () => {
-  const health = await messagingPlugin.getHealthStatus();
-  if (!health.isHealthy) {
-    console.warn("Plugin health issues detected:", health.issues);
-    // Implement alerting or recovery logic
-  }
-}, 30000); // Check every 30 seconds
+| Method | Description | Returns |
+|--------|-------------|---------|
+| `login(alias, password)` | Authenticate user | `Promise<void>` |
+| `sendMessage(recipient, content)` | Send encrypted message | `Promise<MessageSendResult>` |
+| `listenForMessages(sender, callback)` | Listen for messages | `void` |
+| `createGroup(name, members)` | Create encrypted group | `Promise<string>` |
+| `sendGroupMessage(groupId, content)` | Send group message | `Promise<void>` |
+| `startInboxListening(callback)` | Start inbox listener | `void` |
+| `publishUserKeys()` | Publish encryption keys | `Promise<void>` |
+
+## Security Model
+
+The plugin implements a comprehensive security model:
+
+- **End-to-End Encryption**: All messages encrypted with recipient's public key
+- **Forward Secrecy**: Keys rotated to prevent future message decryption
+- **Message Integrity**: Digital signatures verify message authenticity
+- **Replay Protection**: Message chaining prevents replay attacks
+- **Anonymous Communication**: No central authority required
+
+## Performance
+
+- **Real-time**: Messages delivered instantly across the network
+- **Efficient**: Minimal bandwidth usage through smart caching
+- **Scalable**: Handles thousands of messages and groups
+- **Reliable**: Automatic retry and error recovery
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
+### Development Setup
+
+```bash
+git clone https://github.com/shogun-org/shogun-message-plugin.git
+cd shogun-message-plugin
+npm install
+npm run dev
 ```
 
-### 2. Error Handling
+### Testing
 
-Implement comprehensive error handling:
-
-```typescript
-try {
-  const result = await messagingPlugin.sendMessage(recipient, message);
-  if (!result.success) {
-    throw new Error(result.error);
-  }
-} catch (error) {
-  console.error("Failed to send message:", error);
-  // Implement user notification or retry logic
-}
+```bash
+npm test
+npm run test:coverage
 ```
 
-### 3. Message Size Limits
+### Building
 
-Keep messages reasonably sized for better performance:
-
-```typescript
-const MAX_MESSAGE_SIZE = 10000; // characters
-
-if (message.length > MAX_MESSAGE_SIZE) {
-  throw new Error("Message too large");
-}
+```bash
+npm run build
 ```
 
-### 4. Connection Management
+## Examples
 
-Properly manage listening state:
+Check out the [examples](./examples/) directory for complete working examples:
 
-```typescript
-// Start listening when app becomes active
-useEffect(() => {
-  messagingPlugin.startListening();
-
-  return () => {
-    messagingPlugin.stopListening();
-  };
-}, []);
-```
-
-### 5. Memory Management
-
-Clear old messages to prevent memory issues:
-
-```typescript
-// Implement message cleanup
-const cleanupOldMessages = () => {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000; // 30 days
-  // Remove messages older than cutoff
-};
-```
-
-### 6. Performance Monitoring
-
-Monitor performance in production:
-
-```typescript
-// Log performance metrics
-setInterval(() => {
-  const stats = messagingPlugin.getStats();
-  console.log("Performance metrics:", {
-    messagesSent: stats.performanceMetrics.messagesSent,
-    averageResponseTime: stats.performanceMetrics.averageResponseTime,
-  });
-}, 60000); // Log every minute
-```
-
-## Migration Guide
-
-### From Version 3.x to 4.x
-
-1. Update import statements to use the new plugin structure
-2. Replace direct GunDB calls with plugin methods
-3. Update error handling to use the new error system
-4. Implement performance monitoring for better insights
-5. Add health checks for production readiness
-
-### Breaking Changes
-
-- Plugin initialization now requires explicit call to `initialize()`
-- Error handling has been centralized with enhanced features
-- Message listening must be explicitly started/stopped
-- Input validation is now enforced with size limits
-- Performance monitoring is now built-in
+- [Basic Messaging](./examples/basic-messaging.ts)
+- [Group Chat](./examples/group-chat.ts)
+- [Inbox System](./examples/inbox-system.ts)
+- [React Integration](./examples/react-integration.tsx)
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Plugin not initialized**: Ensure `initialize()` is called before using any methods
-2. **Network timeouts**: Check peer connectivity and implement retry logic
-3. **Encryption failures**: Verify public keys are valid and properly formatted
-4. **Memory leaks**: Implement proper cleanup for message listeners
-5. **Performance issues**: Monitor metrics and implement optimization
+**"User not logged in"**
+```typescript
+await messaging.login('your-alias', 'your-password');
+```
+
+**"Core not initialized"**
+```typescript
+await messaging.initialize(core);
+```
+
+**"Keys not found"**
+```typescript
+await messaging.publishUserKeys();
+```
+
+**"Network connection failed"**
+```typescript
+// Check peer URLs and network connectivity
+const core = new ShogunCore({
+  peers: ['https://peer.wallie.io/gun'] // Try different peers
+});
+```
 
 ### Debug Mode
 
-Enable debug logging for troubleshooting:
-
 ```typescript
-// Debug logs are automatically included in development mode
-console.log("Plugin stats:", messagingPlugin.getStats());
+// Enable debug logging
+messaging.setInboxDebugMode(true);
+
+// Check plugin status
+const status = messaging.getPluginStatus();
+console.log('Plugin status:', status);
 ```
 
-### Health Check Debugging
+## License
 
-Use health checks to identify issues:
-
-```typescript
-const health = await messagingPlugin.getHealthStatus();
-
-if (!health.isHealthy) {
-  console.error("Health issues:", health.issues);
-  console.error("Component status:", health.components);
-  console.error("Performance issues:", health.performance);
-}
-```
+MIT License - see [LICENSE](./LICENSE) file for details.
 
 ## Support
 
-For issues and questions:
+- 📖 [Documentation](./API.md)
+- 🐛 [Issue Tracker](https://github.com/shogun-org/shogun-message-plugin/issues)
+- 💬 [Discord Community](https://discord.gg/shogun)
+- 📧 [Email Support](mailto:support@shogun-eco.xyz)
 
-1. Check the troubleshooting section
-2. Review error logs with debug mode enabled
-3. Consult the performance monitoring metrics
-4. Use health checks to identify component issues
-5. Open an issue in the repository with detailed error information
+## Changelog
 
-## Production Checklist
+See [CHANGELOG.md](./CHANGELOG.md) for version history and updates.
 
-Before deploying to production:
+---
 
-- [ ] Implement health monitoring
-- [ ] Set up performance monitoring
-- [ ] Configure error handling and alerting
-- [ ] Test retry mechanisms
-- [ ] Validate input sanitization
-- [ ] Monitor memory usage
-- [ ] Set up logging and debugging
-- [ ] Test all message types (private, group, public, token)
-- [ ] Verify encryption and security
-- [ ] Test network resilience
+**Built with ❤️ by the Shogun Team**

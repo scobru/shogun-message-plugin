@@ -267,6 +267,15 @@ export interface MessagingPluginInterface {
   removeCertificate(recipientPub: string): void;
   getActiveCertificates(): string[];
   hasCertificate(recipientPub: string): boolean;
+
+  // **NEW: Username management methods**
+  registerUsername(username: string): Promise<UsernameRegistrationResult>;
+  registerUserData(username: string, userEpub: string, userPub: string): Promise<UserDataRegistrationResult>;
+  updateUsername(newUsername: string): Promise<UsernameUpdateResult>;
+  searchUser(username: string): Promise<UsernameSearchResult>;
+  isUsernameAvailable(username: string, excludeUserPub?: string): Promise<boolean>;
+  getUsername(userPub: string): Promise<string | null>;
+  getRecipientEpub(recipientPub: string): Promise<string | null>;
 }
 
 // MessageProcessor specific types - Simplified
@@ -361,4 +370,21 @@ export interface UsernameRegistrationResult {
   success: boolean;
   error?: string;
   username?: string;
+}
+
+// **NEW: Username management method results**
+export interface UsernameSearchResult {
+  success: boolean;
+  userPub?: string;
+  error?: string;
+}
+
+export interface UsernameUpdateResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface UserDataRegistrationResult {
+  success: boolean;
+  error?: string;
 }
